@@ -34,10 +34,6 @@ export interface LlmTurn {
   finish_reason: string;
 }
 
-export function llmGetConfig(): Promise<LlmConfig> {
-  return invoke("llm_get_config");
-}
-
 export function llmSetConfig(config: LlmConfig): Promise<void> {
   return invoke("llm_set_config", { config });
 }

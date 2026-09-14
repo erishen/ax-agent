@@ -66,19 +66,23 @@ fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 
 /// Load LLM config. Precedence: saved settings (app_data_dir/llm.json from
 /// the ⚙️ panel) > `AX_EXPLORER_LLM_*` env vars / `.env` file > built-in
-/// defaults. `api_key` is masked in the returned copy (frontend shows a
-/// placeholder); use [`llm_get_config_masked`] semantics below.
+/// defaults. The `api_key` is **masked** (returned empty) — the frontend only
+/// learns whether one is stored via `llm_configured().has_key`; the raw key
+/// never crosses the IPC boundary.
 ///
 /// # Errors
 /// File read/parse failures.
 #[tauri::command]
 pub async fn llm_get_config(app: tauri::AppHandle) -> Result<LlmConfig, String> {
     let path = config_path(&app)?;
-    if !path.exists() {
-        return Ok(LlmConfig::default());
-    }
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {e}"))?;
-    serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {e}"))
+    let mut cfg = if !path.exists() {
+        LlmConfig::default()
+    } else {
+        let content = std::fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {e}"))?;
+        serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {e}"))?
+    };
+    cfg.api_key.clear();
+    Ok(cfg)
 }
 
 /// Whether the saved config (or env) already provides everything needed.
@@ -134,13 +138,22 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
     }
 }
 
-/// Save LLM config.
+/// Save LLM config. An empty `api_key` means "keep whatever is already
+/// stored" (the frontend never receives the raw key, so this is how a
+/// settings change without a new key avoids clobbering the existing one).
 ///
 /// # Errors
 /// File write failures.
 #[tauri::command]
-pub async fn llm_set_config(app: tauri::AppHandle, config: LlmConfig) -> Result<(), String> {
+pub async fn llm_set_config(app: tauri::AppHandle, mut config: LlmConfig) -> Result<(), String> {
     let path = config_path(&app)?;
+    if config.api_key.trim().is_empty() {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(old) = serde_json::from_str::<LlmConfig>(&text) {
+                config.api_key = old.api_key;
+            }
+        }
+    }
     let json = serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {e}"))?;
     std::fs::write(&path, json).map_err(|e| format!("写入配置失败: {e}"))
 }

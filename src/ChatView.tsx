@@ -13,7 +13,6 @@ import {
 import { exampleBatch, type ExampleTask } from "./examples";
 import {
   llmConfigured,
-  llmGetConfig,
   llmListModels,
   llmSetConfig,
   type LlmConfig,
@@ -31,31 +30,24 @@ function SettingsModal({
   const [status, setStatus] = useState<string | null>(null);
   const [statusInfo, setStatusInfo] = useState<LlmConfigured | null>(null);
 
+  // Ref for the effect below (avoids dependency churn).
+  const statusInfoRef = useRef<LlmConfigured | null>(null);
+  statusInfoRef.current = statusInfo;
+
   useEffect(() => {
-    // Load saved config; when none, prefill from .env-derived defaults.
+    // Fetch metadata (has_key/base_url/model) without ever receiving the
+    // raw api_key — that never crosses the IPC boundary any more.
     llmConfigured()
       .then((info) => {
         setStatusInfo(info);
-        return llmGetConfig();
-      })
-      .then((cfg) => {
-        // If nothing saved and nothing in the file, adopt env-provided values.
-        if (!cfg.api_key && statusInfoRef.current && statusInfoRef.current.source !== "settings") {
-          setConfig({
-            ...cfg,
-            base_url: statusInfoRef.current.base_url || cfg.base_url,
-            model: statusInfoRef.current.model || cfg.model,
-          });
-        } else {
-          setConfig(cfg);
-        }
+        setConfig({
+          base_url: info.base_url,
+          api_key: "",            // never prefilled from saved config
+          model: info.model,
+        });
       })
       .catch((e) => setStatus(`读取配置失败: ${String(e)}`));
   }, []);
-
-  // Ref for the effect above (avoids dependency churn).
-  const statusInfoRef = useRef<LlmConfigured | null>(null);
-  statusInfoRef.current = statusInfo;
 
   if (!config) {
     return (
@@ -84,7 +76,7 @@ function SettingsModal({
           <input
             type="password"
             value={config.api_key}
-            placeholder="sk-…"
+            placeholder={statusInfo?.has_key ? "已保存（留空保持不变）" : "sk-…"}
             onChange={(e) => setConfig({ ...config, api_key: e.target.value })}
           />
         </label>

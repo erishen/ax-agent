@@ -762,7 +762,9 @@ fn frontmost_guard(pid: Option<i32>) -> Result<(), String> {
         }
         if round == 0 {
             // The target dropped to the background (e.g. ax-explorer took
-            // focus). Reactivate it, wait a beat, then re-check.
+            // focus). Reactivate it, wait a beat, then re-check. The command
+            // wrappers are sync-bodied #[tauri::command(async)], so a real
+            // sleep is the only option here; it's once per agent step.
             activate_pid(want);
             std::thread::sleep(std::time::Duration::from_millis(400));
         }

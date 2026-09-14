@@ -187,9 +187,10 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
         }
         "profile_search" => {
             // Personal-profile RAG retrieval from the local langchain-llm-toolkit
-            // (127.0.0.1:8001, INTERNAL key — loopback only, no network exposure).
-            // The agent is the LLM: it needs the source snippets, not a
-            // generated answer, so we call the search-only endpoint.
+            // (127.0.0.1:8001). The agent is the LLM: it needs the source
+            // snippets, not a generated answer, so we call the search-only
+            // endpoint. Credentials belong in env (PROFILE_RAG_URL/KEY), not in
+            // the source tree.
             let query = s("query");
             if query.is_empty() {
                 return "error: missing 'query'".into();
@@ -197,8 +198,10 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
             let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(4).min(8);
             let base = std::env::var("PROFILE_RAG_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8001".to_string());
-            let key = std::env::var("PROFILE_RAG_KEY")
-                .unwrap_or_else(|_| "ax-kit-local-2026".to_string());
+            let Some(key) = std::env::var("PROFILE_RAG_KEY").ok().filter(|v| !v.trim().is_empty())
+            else {
+                return "error: 未配置 PROFILE_RAG_KEY 环境变量，无法访问本地资料库".into();
+            };
             let body = format!("{{\"query\":{},\"k\":{}}}", serde_json::to_string(&query).unwrap_or_default(), k);
             let out = std::process::Command::new("curl")
                 .args([
