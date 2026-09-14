@@ -621,41 +621,65 @@ async function runTool(
       }
       case "wait_for": {
         const keyword = str("element");
+        const ocrText = str("text");
         const timeout = Math.min(Math.max(Number(args.timeout) || 8, 1), 10);
         const pid = state.pid;
         if (pid === null)
           return { result: "尚未选择应用，先用 open_app 打开一个", state };
         const deadline = Date.now() + timeout * 1000;
         let lastOutline = state.outline;
+        let lastWords: OcrScreenWord[] = [];
         let waited = 0;
         while (Date.now() < deadline) {
           const w = await observeWait(pid, 2);
           waited += w.waited_secs;
-          let outline = lastOutline;
-          try {
-            outline = await treeOf(pid, 10);
-          } catch {
-            /* 树读取失败时沿用上一份 */
-          }
-          if (keyword) {
-            const hits = findNodes(outline, keyword);
-            if (hits.length > 0) {
-              state = { ...state, outline };
+          if (ocrText) {
+            // 自绘 UI：用 OCR 等某段屏幕文字出现。
+            let words: OcrScreenWord[] = [];
+            try {
+              words = await ocrWindow(pid);
+            } catch {
+              /* 截图/识别失败时继续等下一轮 */
+            }
+            lastWords = words;
+            const hit = words.find((x) => x.text.includes(ocrText));
+            if (hit) {
               return {
-                result: `等待完成（${waited}s）：「${keyword}」已出现\n${renderOutline(hits)}`,
+                result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已出现于 (${Math.round(hit.x)}, ${Math.round(hit.y)})`,
                 state,
               };
             }
-          } else if (JSON.stringify(outline) !== JSON.stringify(lastOutline)) {
+          } else {
+            let outline = lastOutline;
+            try {
+              outline = await treeOf(pid, 10);
+            } catch {
+              /* 树读取失败时沿用上一份 */
+            }
+            if (keyword) {
+              const hits = findNodes(outline, keyword);
+              if (hits.length > 0) {
+                state = { ...state, outline };
+                return {
+                  result: `等待完成（${waited}s）：「${keyword}」已出现\n${renderOutline(hits)}`,
+                  state,
+                };
+              }
+            } else if (JSON.stringify(outline) !== JSON.stringify(lastOutline)) {
+              state = { ...state, outline };
+              return { result: `等待完成（${waited}s）：界面已发生变化`, state };
+            }
+            lastOutline = outline;
             state = { ...state, outline };
-            return { result: `等待完成（${waited}s）：界面已发生变化`, state };
           }
-          lastOutline = outline;
-          state = { ...state, outline };
         }
-        const tail = keyword
-          ? `「${keyword}」在 ${timeout}s 内未出现`
-          : `界面在 ${timeout}s 内无变化`;
+        const tail = ocrText
+          ? `屏幕文字「${ocrText}」在 ${timeout}s 内未出现。当前可见文字：\n${
+              lastWords.slice(0, 12).map((x) => x.text).join(" / ") || "（无）"
+            }`
+          : keyword
+            ? `「${keyword}」在 ${timeout}s 内未出现`
+            : `界面在 ${timeout}s 内无变化`;
         return {
           result: `${tail}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
           state,
