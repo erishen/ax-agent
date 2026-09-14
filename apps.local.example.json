@@ -1,0 +1,12 @@
+{
+  "$comment": "复制为 apps.local.json（已 gitignore，仅本机生效）。全部字段可选。apps.hidden: 不出现在示例任务里的应用（bundle 名或本地化名，大小写不敏感）。apps.pinned: 强制优先展示的应用。extra_tasks: 自定义示例任务（label 可省略，默认取任务文本前 12 字）。max_apps: 参与任务生成的应用数量上限。",
+  "apps": {
+    "hidden": ["Activity Monitor", "Siri", "Stocks", "Tips", "News"],
+    "pinned": ["WeChat", "备忘录", "腾讯视频"]
+  },
+  "extra_tasks": [
+    { "label": "💼 我的工作流", "task": "打开 WeChat，读一下界面，把窗口移到屏幕左侧" },
+    { "task": "在印象笔记里新建一条笔记：每周复盘" }
+  ],
+  "max_apps": 40
+}

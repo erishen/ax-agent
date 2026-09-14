@@ -1,0 +1,19 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# LLM 密钥等本地环境配置
+.env
+.env.local
+
+# 本机应用/任务建议配置（按机器，不入库；模板见 apps.local.example.json）
+apps.local.json
+
+# 本机 MCP 服务器配置（模板见 mcp.local.example.json）
+mcp.local.json
+
+src-tauri/target
+src-tauri/gen/schemas
+
+.DS_Store

@@ -1,0 +1,69 @@
+[package]
+name = "ax-explorer"
+version = "0.1.0"
+description = "AX Explorer: Tauri v2 + React + TypeScript explorer for the macOS Accessibility API (AXUIElement)"
+authors = ["erishen"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "ax_explorer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.35"
+# LLM bridge (OpenAI-compatible chat completions).
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = { version = "0.3", default-features = false }
+# .env loading for LLM config (AX_EXPLORER_LLM_* variables).
+dotenvy = "0.15"
+# Async sleep for LLM retry backoff.
+tokio = { version = "1", features = ["time", "macros", "net", "rt", "rt-multi-thread", "sync"] }
+# Loopback JSON-RPC server for CLI / remote-agent observe+act (milestone 4).
+axum = { version = "0.7", features = [] }
+
+# macOS Accessibility API (AXUIElement) via the objc2 ecosystem.
+# objc2-core-foundation: CFString / CFArray / CFDictionary / CFNumber helpers.
+# objc2-application-services: AXUIElement / AXError / AXValue / AXIsProcessTrusted*.
+# objc2-app-kit: NSWorkspace + NSRunningApplication (enumerate GUI apps by pid).
+objc2-core-foundation = { version = "0.3", features = [
+    "CFString",
+    "CFArray",
+    "CFDictionary",
+    "CFNumber",
+    "std",
+    "alloc",
+] }
+objc2-application-services = { version = "0.3", features = [
+    "AXUIElement",
+    "AXError",
+    "AXValue",
+    "HIServices",
+    "libc",
+] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSRunningApplication",
+    "NSWorkspace",
+    "NSScreen",
+    "libc",
+] }
+# displayNameAtPath: localized app display names (备忘录 not Notes) for the
+# installed-apps scan that feeds example tasks.
+objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSString"] }
+# MainThreadMarker for NSScreen::screens in desktop_tools (screen_info).
+objc2 = "0.6"
+# Synthetic CGEvent scroll-wheel events (scroll_at_position in ax_act).
+# `highsierra` feature gates CGEvent::new_scroll_event; already in the tree via tauri.
+core-graphics = { version = "0.25", features = ["highsierra", "elcapitan"] }
+core-foundation = "0.10"
+objc2-vision = "0.3"
