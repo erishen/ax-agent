@@ -34,6 +34,7 @@ import {
   permissionStatus,
   pressKey,
   readAttribute,
+  resizeWindow,
   rightClickAt,
   scrollAt,
   scrollToVisible,
@@ -66,10 +67,10 @@ interface OutlineNode {
 
 /** One reversible mutation, remembered so the user can undo it. */
 export interface UndoRecord {
-  kind: "set_value" | "set_position";
+  kind: "set_value" | "set_position" | "set_size";
   pid: number;
   path: number[];
-  /** Old AXValue text, or "x,y" position, before the mutation. */
+  /** Old AXValue text, or "x,y" position, or "w,h" size, before the mutation. */
   prev: string;
   label: string;
 }
@@ -837,12 +838,97 @@ async function runTool(
         if (state.pid === null) return { result: "尚未选择应用", state };
         const win = state.outline.find((n) => n.role === "AXWindow");
         if (!win) return { result: "没有窗口节点", state };
+        let x = Number(args.x);
+        let y = Number(args.y);
+        let resize: { w: number; h: number } | null = null;
+        const position = str("position");
+        if (position) {
+          // 语义摆放：主屏边界 + 窗口当前尺寸换算坐标。
+          let parsed: Array<{
+            index: number;
+            origin: [number, number];
+            size: [number, number];
+          }> = [];
+          try {
+            parsed = JSON.parse(await desktopToolExec("screen_info", {}));
+          } catch {
+            /* 屏幕信息解析失败则报错 */
+          }
+          if (!parsed.length) {
+            return { result: `无法读取屏幕信息来换算 position=${position}，请改用 x/y`, state };
+          }
+          const main = parsed[0];
+          const sb = await windowBounds(state.pid).catch(() => null);
+          const ww = sb ? sb.w : 0;
+          const wh = sb ? sb.h : 0;
+          if (position === "left") {
+            x = main.origin[0];
+            y = main.origin[1];
+          } else if (position === "right") {
+            x = main.origin[0] + main.size[0] - ww;
+            y = main.origin[1];
+          } else if (position === "center") {
+            x = main.origin[0] + (main.size[0] - ww) / 2;
+            y = main.origin[1] + (main.size[1] - wh) / 2;
+          } else if (position === "maximize") {
+            x = main.origin[0];
+            y = main.origin[1];
+            resize = { w: main.size[0], h: main.size[1] };
+          } else {
+            return {
+              result: `未知 position: ${position}（支持 left/right/center/maximize）`,
+              state,
+            };
+          }
+        }
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return {
+            result: "需要 x/y 坐标（或 position 语义：left/right/center/maximize）",
+            state,
+          };
+        }
         const prev = await readAttribute(state.pid, win.path, "AXPosition").catch(() => null);
-        await setPosition(state.pid, win.path, Number(args.x) || 0, Number(args.y) || 0, { role: win.role, label: win.label });
+        await setPosition(state.pid, win.path, Math.round(x), Math.round(y), {
+          role: win.role,
+          label: win.label,
+        });
+        if (resize) {
+          await resizeWindow(state.pid, win.path, resize.w, resize.h, {
+            role: win.role,
+            label: win.label,
+          });
+        }
         state = prev && prev.includes("x:")
           ? { ...state, undo: { kind: "set_position", pid: state.pid, path: win.path, prev, label: "窗口" } }
           : state;
-        return { result: `窗口已移到 (${args.x}, ${args.y})`, state };
+        return {
+          result:
+            position === "maximize"
+              ? "窗口已最大化铺满主屏"
+              : `窗口已移到 (${Math.round(x)}, ${Math.round(y)})${
+                  resize ? ` 并调整到 ${resize.w}x${resize.h}` : ""
+                }`,
+          state,
+        };
+      }
+      case "resize_window": {
+        if (state.pid === null) return { result: "尚未选择应用", state };
+        const w = Number(args.w);
+        const h = Number(args.h);
+        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+          return { result: "w/h 必须是正数（points）", state };
+        }
+        const win = state.outline.find((n) => n.role === "AXWindow");
+        if (!win) return { result: "没有窗口节点", state };
+        const prev = await readAttribute(state.pid, win.path, "AXSize").catch(() => null);
+        await resizeWindow(state.pid, win.path, w, h, {
+          role: win.role,
+          label: win.label,
+        });
+        state = prev && prev.includes("w:")
+          ? { ...state, undo: { kind: "set_size", pid: state.pid, path: win.path, prev, label: "窗口" } }
+          : state;
+        return { result: `窗口已调整为 ${w}x${h}`, state };
       }
       case "element_at": {
         const hit = await elementAt(Number(args.x) || 0, Number(args.y) || 0);
@@ -1445,6 +1531,11 @@ export async function undoLast(state: SessionState): Promise<SessionState> {
   try {
     if (u.kind === "set_value") {
       await setValue(u.pid, u.path, u.prev);
+    } else if (u.kind === "set_size") {
+      const w = Number(/(?:w:\s*)(-?\d+(?:\.\d+)?)/.exec(u.prev)?.[1] ?? NaN);
+      const h = Number(/(?:h:\s*)(-?\d+(?:\.\d+)?)/.exec(u.prev)?.[1] ?? NaN);
+      if (!Number.isFinite(w) || !Number.isFinite(h)) throw new Error(`无法解析原尺寸 ${u.prev}`);
+      await resizeWindow(u.pid, u.path, w, h);
     } else {
       const x = Number(/(?:x:\s*)(-?\d+(?:\.\d+)?)/.exec(u.prev)?.[1] ?? NaN);
       const y = Number(/(?:y:\s*)(-?\d+(?:\.\d+)?)/.exec(u.prev)?.[1] ?? NaN);
@@ -1453,7 +1544,7 @@ export async function undoLast(state: SessionState): Promise<SessionState> {
     }
     return reply(
       { ...state, undo: null },
-      `↩️ 已撤销对「${u.label}」的修改（恢复原${u.kind === "set_value" ? "文本" : "位置"}）。`,
+      `↩️ 已撤销对「${u.label}」的修改（恢复原${u.kind === "set_value" ? "文本" : u.kind === "set_size" ? "尺寸" : "位置"}）。`,
     );
   } catch (e) {
     return reply(state, `❌ 撤销失败：${asText(e)}`);

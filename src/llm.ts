@@ -258,8 +258,26 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "move_window",
-    description: "把当前应用的窗口移动到指定位置（全局屏幕坐标，points）。",
-    parameters: obj({ x: { type: "number" }, y: { type: "number" } }, ["x", "y"]),
+    description: "移动当前应用的窗口：给 x/y（全局屏幕坐标 points）精确移动，或给 position 语义摆放（left 左缘 / right 右缘 / center 居中 / maximize 铺满主屏——自动换算坐标，maximize 会同时调整窗口尺寸）。摆分屏布局时建议配合 resize_window 先定尺寸。",
+    parameters: obj(
+      {
+        x: { type: "number", description: "目标 x（points）；给了 position 可省略" },
+        y: { type: "number", description: "目标 y（points）；给了 position 可省略" },
+        position: { type: "string", description: "可选：left/right/center/maximize 语义摆放" },
+      },
+      [],
+    ),
+  },
+  {
+    name: "resize_window",
+    description: "把当前应用的窗口调整为指定宽高（points）。配合 move_window 摆分屏/布局（如左半屏：resize 到约 960x1080 再 move 到 0,0；尺寸可用 screen_info 的显示器大小推算）。部分应用不支持 AXSize，失败会报错。",
+    parameters: obj(
+      {
+        w: { type: "number", description: "目标宽度（points）" },
+        h: { type: "number", description: "目标高度（points）" },
+      },
+      ["w", "h"],
+    ),
   },
   {
     name: "element_at",

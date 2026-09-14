@@ -103,6 +103,17 @@ export function setPosition(
   return invoke("ax_set_position", { pid, path, x, y, relocate: relocate ?? null });
 }
 
+/** Resize a window via AXSize (points). */
+export function resizeWindow(
+  pid: number,
+  path: number[],
+  w: number,
+  h: number,
+  relocate?: RelocateHint,
+): Promise<void> {
+  return invoke("ax_resize_window", { pid, path, w, h, relocate: relocate ?? null });
+}
+
 /** Which element is under this global screen point (any app)? */
 export function elementAt(x: number, y: number): Promise<HitElement> {
   return invoke("ax_element_at", { x, y });

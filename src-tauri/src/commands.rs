@@ -365,6 +365,27 @@ pub fn ax_set_position(
     })
 }
 
+/// Resize the window to `w x h` (points) via `AXSize`.
+///
+/// When the path is stale and `relocate` carries the element's role/label,
+/// the command re-locates the element and retries once.
+///
+/// # Errors
+/// Stale path (and relocation fails) or the element cannot be resized.
+#[tauri::command(async)]
+pub fn ax_resize_window(
+    pid: i32,
+    path: Vec<u32>,
+    w: f64,
+    h: f64,
+    relocate: Option<RelocateHint>,
+) -> Result<(), String> {
+    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
+    with_relocate(pid, &path, &relocate, |fresh| {
+        ax_act::resize_window_for_path(pid, fresh, w, h)
+    })
+}
+
 /// Grab keyboard focus for the element (`AXFocused = true`).
 ///
 /// When the path is stale and `relocate` carries the element's role/label,

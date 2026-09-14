@@ -127,6 +127,7 @@ pub fn run() {
             commands::ax_perform_action,
             commands::ax_set_value,
             commands::ax_set_position,
+            commands::ax_resize_window,
             commands::ax_focus_element,
             commands::ax_element_at,
             commands::ax_read_attribute,

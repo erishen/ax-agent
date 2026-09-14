@@ -23,7 +23,7 @@ use std::sync::{LazyLock, Mutex};
 
 use objc2_application_services::{AXError, AXObserver, AXUIElement, AXValue, AXValueType};
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFEqual, CFRetained, CFRunLoop, CFString, CFType, CGPoint,
+    CFArray, CFBoolean, CFEqual, CFRetained, CFRunLoop, CFString, CFType, CGPoint, CGSize,
 };
 use objc2_core_foundation::Type as _; // retain() on CF references
 use serde::Serialize;
@@ -308,6 +308,27 @@ pub fn set_position_for_path(pid: i32, path: &[usize], x: f64, y: f64) -> Result
         };
         // SAFETY: AXPosition takes a CGPoint-typed AXValue.
         let result = set_attribute(&element, "AXPosition", &*value);
+        drop(value);
+        result
+    }
+}
+
+/// Resize the window by setting `AXSize` (width/height in points).
+///
+/// Mirrors [`set_position_for_path`]; most apps honor AXSize on their main
+/// window (split-screen layouts need this — moving alone can't reshape).
+///
+/// # Errors
+/// Untrusted process, stale path, or the element cannot be resized.
+pub fn resize_window_for_path(pid: i32, path: &[usize], w: f64, h: f64) -> Result<(), String> {
+    let element = element_at_path(pid, path)?;
+    unsafe {
+        let size = CGSize { width: w, height: h };
+        let Some(value) = AXValue::new(AXValueType::CGSize, NonNull::from(&size).cast()) else {
+            return Err("AXValue::new(CGSize) 返回空".to_string());
+        };
+        // SAFETY: AXSize takes a CGSize-typed AXValue.
+        let result = set_attribute(&element, "AXSize", &*value);
         drop(value);
         result
     }
