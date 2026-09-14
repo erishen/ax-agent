@@ -227,5 +227,6 @@ CGEvent 合成输入（鼠标/键盘/滚动）→ Agent 接口层（observe/act 
 ## 注意
 
 - AX 属性读写是跨进程同步 IPC，`#[tauri::command(async)]` 已放到工作线程，不卡 UI。
-- `AXUIElement` 句柄不能跨 IPC 持久化：动作按「树转储时记录的子索引路径」定位，
-  UI 变化后路径可能失效（刷新重试；后续按 role+title 自动重定位）。
+- `AXUIElement` 句柄不能跨 IPC 持久化：动作按「树转储时记录的子索引路径」定位；
+  UI 变化后路径可能失效 —— 动作命令支持 `relocate{role,label}` hint，路径失效时自动按
+  role+title 重搜树并重试一次（会话指令与 LLM 工具均已接入）。

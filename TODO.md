@@ -60,8 +60,9 @@
 - [x] 合成键盘输入（CGEvent 路线）：`ax_key`（单键/组合键 Cmd+F、Alt+Left…）与
       `ax_type_keys`（逐键输入，Unicode payload 支持中文/emoji，触发随输入即搜索等逐键反应）
       —— 见 `ax_act::press_key_combo` / `ax_act::type_text_synthetic`
-- [ ] 新增权限检测：`CGPreflightListenEventAccess` / `CGRequestListenEventAccess`
+- [x] 新增权限检测：`CGPreflightListenEventAccess` / `CGRequestListenEventAccess`
       （Input Monitoring）+ `CGPreflightPostEventAccess`（Accessibility 已含）
+      —— `commands::PermissionOverview` + 权限页分项展示/请求
 
 ## 里程碑 4 — Agent 接口层
 
@@ -73,7 +74,9 @@
       兜底（`last_trigger_bump`/`has_bumped_since`），超时退化为轮询
 - [x] 动作后验证：`ax.set_value` 读回 AXValue 对比、`ax.set_position` 读回 AXPosition 比坐标
       （±2px），返回 `verified` 字段
-- [ ] 动作前置校验：settable 检查、路径失效自动重定位（按 role+title 重新搜索）
+- [x] 路径失效自动重定位：动作命令带 `relocate{role,label}` hint，路径失效时
+      `ax_core::find_path_by_hint` 按 role+title 重搜树并重试一次（会话指令与 LLM 工具已接入）
+- [ ] 动作前置校验：settable 检查（重定位已实现，前置校验待做）
 - [x] 滚动（`AXScrollToVisible` + CGEvent scroll wheel）：`ax_scroll`（合成滚轮事件，lines 正=上/负=下）、
       `ax_scroll_to_visible`（语义滚动）、`ax_named_action`（AXIncrement/AXDecrement/AXPick/AXShowMenu 等）
 - [ ] 菜单栏 / Dock / 通知中心 等系统 UI 的处理（`AXUIElementCreateSystemWide`、
@@ -83,5 +86,6 @@
 ## 打磨
 
 - [x] 权限页显示「当前缺哪些权限」（Accessibility / Screen Recording / Input Monitoring 分项状态）
-- [ ] 树转储性能：`AXUIElementCopyMultipleAttributeValues` 批量读属性，减少 IPC 往返
+- [x] 树转储性能：`AXUIElementCopyMultipleAttributeValues` 批量读属性（每节点 14 属性一次 IPC 往返），
+      减少跨进程 IPC 开销 —— `ax_core::copy_multiple_attributes`
 - [ ] 把 vite 端口、进程清理等 workspace 约定文档化进根 README
