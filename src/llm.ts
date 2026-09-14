@@ -232,8 +232,8 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "find",
-    description: "在当前界面大纲中按关键词搜索元素，返回匹配列表。",
-    parameters: obj({ keyword: { type: "string" } }, ["keyword"]),
+    description: "在当前界面大纲中按关键词搜索元素，返回匹配列表。支持多关键词（空格或逗号分隔，任一命中即可），如「保存 导出」。",
+    parameters: obj({ keyword: { type: "string", description: "元素标题或描述里的关键词，多个词用空格/逗号分隔" } }, ["keyword"]),
   },
   {
     name: "click",

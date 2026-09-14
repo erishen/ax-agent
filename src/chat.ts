@@ -831,7 +831,10 @@ async function runTool(
         };
       }
       case "find": {
-        const hits = findNodes(state.outline, str("keyword"));
+        const kw = str("keyword");
+        const hits = kw.includes(",") || /\s/.test(kw.trim())
+          ? findNodesAny(state.outline, kw.split(/[,，\s]+/).filter(Boolean))
+          : findNodes(state.outline, kw);
         return {
           result: hits.length
             ? hits.slice(0, 10).map((n) => `${n.role}「${n.label}」${n.value ? `值=${n.value}` : ""}${n.actions.length ? ` 动作=${n.actions.join(",")}` : ""}`).join("\n")
