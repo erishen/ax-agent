@@ -1099,6 +1099,7 @@ async function runTool(
       case "menu_bar": {
         let pid = state.pid;
         const wanted = str("app");
+        const keyword = str("keyword");
         if (wanted) {
           const apps = await listApps();
           const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
@@ -1107,7 +1108,26 @@ async function runTool(
         } else if (pid === null) {
           return { result: "尚未选择应用且没有指定 app 参数（menu_bar 默认读前台应用，也可传 app 名）", state };
         }
-        const bar = await menuBar(pid ?? undefined, 4);
+        let bar = await menuBar(pid ?? undefined, 4);
+        let note = "";
+        if (keyword) {
+          // 只保留标题含关键词的分支（祖先链保留，path 对 menu_click 仍有效）。
+          const kw = keyword.toLowerCase();
+          const filterMenu = (e: MenuEntry): MenuEntry | null => {
+            const children = e.children
+              .map(filterMenu)
+              .filter((c): c is MenuEntry => c !== null);
+            const self = (e.title || "").toLowerCase().includes(kw);
+            if (!self && !children.length) return null;
+            return { ...e, children: self ? e.children : children };
+          };
+          const filtered = filterMenu(bar);
+          if (!filtered) {
+            return { result: `菜单栏里没有包含「${keyword}」的项`, state };
+          }
+          bar = filtered;
+          note = `（仅显示包含「${keyword}」的菜单项）`;
+        }
         /** Render one menu tree level: items with paths + submenu titles. */
         const renderMenu = (entry: MenuEntry, prefix: string): string[] =>
           entry.children.map((c) => {
@@ -1115,7 +1135,7 @@ async function runTool(
             return [line, ...renderMenu(c, `${prefix}  `)].filter(Boolean);
           }).flat();
         const lines = [
-          `菜单栏（pid ${pid}）：`,
+          `菜单栏（pid ${pid}）${note}：`,
           ...renderMenu(bar, "  "),
           "提示：跨级路径（如 [0,3,2,1]）可直接 menu_click；打开过一次的子菜单项 path 也是稳定的。",
         ];

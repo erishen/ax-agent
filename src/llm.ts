@@ -367,10 +367,11 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "menu_bar",
-    description: "读取目标应用（默认当前前台应用）的菜单栏树：每个菜单和菜单项带 path（用于 menu_click）和可用动作。菜单驱动的操作（导出、全屏、偏好设置、格式转换）优先走菜单而不是猜按钮。",
+    description: "读取目标应用（默认当前前台应用）的菜单栏树：每个菜单和菜单项带 path（用于 menu_click）和可用动作。菜单驱动的操作（导出、全屏、偏好设置、格式转换）优先走菜单而不是猜按钮。大应用的菜单很长时用 keyword 只过滤相关项（祖先链保留，path 仍可直接用），省上下文。",
     parameters: obj(
       {
         app: { type: "string", description: "可选：应用名（默认前台应用）" },
+        keyword: { type: "string", description: "可选：只返回标题包含此关键词的菜单项" },
       },
       [],
     ),
