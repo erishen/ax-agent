@@ -30,6 +30,7 @@ import {
   openApp,
   performAction,
   ocrWindow,
+  observeWait,
   permissionStatus,
   pressKey,
   readAttribute,
@@ -322,7 +323,7 @@ async function cmdClick(state: SessionState, keyword: string): Promise<SessionSt
     return reply(state, `❌ 元素「${truncate(target.label, 30)}」不支持任何动作（不可点击）。`);
   }
   try {
-    await performAction(state.pid, target.path, target.actions[0]);
+    await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
     // UI may have changed: refresh outline in the background.
     let next = reply(state, `✅ 已对「${truncate(target.label, 30)}」执行 ${target.actions[0]}`);
     try {
@@ -358,10 +359,10 @@ async function cmdType(state: SessionState, rest: string): Promise<SessionState>
   }
   try {
     const prev = await readAttribute(state.pid, target.path, "AXValue").catch(() => null);
-    await setValue(state.pid, target.path, text);
+    await setValue(state.pid, target.path, text, { role: target.role, label: target.label });
     // Refocus so the user sees the caret there.
     try {
-      await focusElement(state.pid, target.path);
+      await focusElement(state.pid, target.path, { role: target.role, label: target.label });
     } catch {
       /* focus is best-effort */
     }
@@ -379,7 +380,7 @@ async function cmdFocus(state: SessionState, keyword: string): Promise<SessionSt
   const target = findNodes(state.outline, keyword)[0];
   if (!target) return reply(state, `❌ 没找到「${keyword}」。说「读一下」刷新。`);
   try {
-    await focusElement(state.pid, target.path);
+    await focusElement(state.pid, target.path, { role: target.role, label: target.label });
     return reply(state, `✅ 焦点已给到「${truncate(target.label, 30)}」`);
   } catch (e) {
     return reply(state, `❌ 聚焦失败：${asText(e)}`);
@@ -392,7 +393,7 @@ async function cmdMoveWindow(state: SessionState, x: number, y: number): Promise
   if (!win) return reply(state, "❌ 当前结构里没有窗口节点，说「读一下」刷新。");
   try {
     const prev = await readAttribute(state.pid, win.path, "AXPosition").catch(() => null);
-    await setPosition(state.pid, win.path, x, y);
+    await setPosition(state.pid, win.path, x, y, { role: win.role, label: win.label });
     const undo =
       prev && prev.includes("x:")
         ? { kind: "set_position" as const, pid: state.pid, path: win.path, prev, label: "窗口" }
@@ -618,6 +619,48 @@ async function runTool(
         lastRead = { key, text: summary };
         return { result, state };
       }
+      case "wait_for": {
+        const keyword = str("element");
+        const timeout = Math.min(Math.max(Number(args.timeout) || 8, 1), 10);
+        const pid = state.pid;
+        if (pid === null)
+          return { result: "尚未选择应用，先用 open_app 打开一个", state };
+        const deadline = Date.now() + timeout * 1000;
+        let lastOutline = state.outline;
+        let waited = 0;
+        while (Date.now() < deadline) {
+          const w = await observeWait(pid, 2);
+          waited += w.waited_secs;
+          let outline = lastOutline;
+          try {
+            outline = await treeOf(pid, 10);
+          } catch {
+            /* 树读取失败时沿用上一份 */
+          }
+          if (keyword) {
+            const hits = findNodes(outline, keyword);
+            if (hits.length > 0) {
+              state = { ...state, outline };
+              return {
+                result: `等待完成（${waited}s）：「${keyword}」已出现\n${renderOutline(hits)}`,
+                state,
+              };
+            }
+          } else if (JSON.stringify(outline) !== JSON.stringify(lastOutline)) {
+            state = { ...state, outline };
+            return { result: `等待完成（${waited}s）：界面已发生变化`, state };
+          }
+          lastOutline = outline;
+          state = { ...state, outline };
+        }
+        const tail = keyword
+          ? `「${keyword}」在 ${timeout}s 内未出现`
+          : `界面在 ${timeout}s 内无变化`;
+        return {
+          result: `${tail}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
+          state,
+        };
+      }
       case "ocr": {
         const wanted = str("app");
         let pid = state.pid;
@@ -712,7 +755,7 @@ async function runTool(
         const target = findNodes(state.outline, str("keyword"))[0];
         if (!target) return { result: `没有找到「${str("keyword")}」，先 read_screen`, state };
         if (!target.actions.length) return { result: `元素「${target.label}」不支持动作`, state };
-        await performAction(state.pid, target.path, target.actions[0]);
+        await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
         try {
           state = { ...state, outline: await treeOf(state.pid, 10) };
         } catch {
@@ -729,9 +772,9 @@ async function runTool(
         );
         if (!target) return { result: "没有找到文本输入区", state };
         const prev = await readAttribute(state.pid, target.path, "AXValue").catch(() => null);
-        await setValue(state.pid, target.path, str("text"));
+        await setValue(state.pid, target.path, str("text"), { role: target.role, label: target.label });
         try {
-          await focusElement(state.pid, target.path);
+          await focusElement(state.pid, target.path, { role: target.role, label: target.label });
         } catch {
           /* focus is best-effort */
         }
@@ -745,7 +788,7 @@ async function runTool(
         if (state.pid === null) return { result: "尚未选择应用", state };
         const target = findNodes(state.outline, str("keyword"))[0];
         if (!target) return { result: `没有找到「${str("keyword")}」`, state };
-        await focusElement(state.pid, target.path);
+        await focusElement(state.pid, target.path, { role: target.role, label: target.label });
         return { result: `焦点已给到「${target.label}」`, state };
       }
       case "move_window": {
@@ -753,7 +796,7 @@ async function runTool(
         const win = state.outline.find((n) => n.role === "AXWindow");
         if (!win) return { result: "没有窗口节点", state };
         const prev = await readAttribute(state.pid, win.path, "AXPosition").catch(() => null);
-        await setPosition(state.pid, win.path, Number(args.x) || 0, Number(args.y) || 0);
+        await setPosition(state.pid, win.path, Number(args.x) || 0, Number(args.y) || 0, { role: win.role, label: win.label });
         state = prev && prev.includes("x:")
           ? { ...state, undo: { kind: "set_position", pid: state.pid, path: win.path, prev, label: "窗口" } }
           : state;

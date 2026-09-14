@@ -262,6 +262,7 @@ async fn pace_gate() {
 ///   provider out instead of hammering it.
 /// - 502/503/504: exponential backoff, capped at 10s.
 /// - other 4xx (401/404…): never retried.
+///
 /// Returns the successful response (body untouched) or a diagnostic error.
 async fn send_with_retry(
     url: &str,

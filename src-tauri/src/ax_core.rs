@@ -17,7 +17,7 @@ use objc2_application_services::{
     AXError, AXIsProcessTrusted, AXIsProcessTrustedWithOptions, AXUIElement, AXValue, AXValueType,
 };
 use objc2_core_foundation::{
-    CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType,
+    CFArray, CFBoolean, CFDictionary, CFNull, CFNumber, CFRetained, CFString, CFType,
 };
 
 use serde::Serialize;
@@ -255,8 +255,8 @@ pub fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
     }
 
     // Dedupe by bundle display name; user-dir entries come last and win.
-    let mut by_name: std::collections::HashMap<String, InstalledApp> =
-        std::collections::HashMap::new();
+    let mut by_name: std::collections::BTreeMap<String, InstalledApp> =
+        std::collections::BTreeMap::new();
     for path in paths {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
@@ -443,6 +443,33 @@ const DISPLAY_ATTRIBUTES: &[&str] = &[
     "AXWindowNumber",
 ];
 
+/// Every attribute [`walk`] needs, read in one batched IPC round-trip via
+/// [`copy_multiple_attributes`]. Failed reads come back `None` positionally.
+/// (The detail-panel rows stay a contiguous slice so rendering is unchanged.)
+const BATCH_ATTRIBUTES: &[&str] = &[
+    "AXRole",
+    "AXRoleDescription",
+    "AXSubrole",
+    "AXTitle",
+    "AXDescription",
+    "AXValue",
+    "AXHelp",
+    "AXPlaceholderValue",
+    "AXFocused",
+    "AXEnabled",
+    "AXPosition",
+    "AXSize",
+    "AXWindowNumber",
+    "AXChildren",
+];
+
+/// Indices into [`BATCH_ATTRIBUTES`].
+const BATCH_ROLE: usize = 0;
+const BATCH_DISPLAY_START: usize = 1; // BATCH_ATTRIBUTES[1..=12] = detail rows
+const BATCH_TITLE: usize = 3;
+const BATCH_DESCRIPTION: usize = 4;
+const BATCH_CHILDREN: usize = 13;
+
 /// Read one attribute of an element as a retained CFType. Returns `None` when
 /// the attribute is unsupported, has no value, or is null.
 ///
@@ -478,6 +505,50 @@ pub(crate) fn copy_string_attribute(element: &AXUIElement, attribute: &str) -> O
     value.downcast_ref::<CFString>().map(|s| s.to_string())
 }
 
+/// Batch-read several attributes of one element in a **single** AX IPC
+/// round-trip (the tree dumper reads 14 attributes per node; doing them one
+/// call at a time dominates traversal latency on busy apps). `names` and the
+/// returned vec align positionally; a failed or unsupported read yields
+/// `None` (the API fills those slots with `kCFNull` when not StopOnError).
+///
+/// # Errors
+/// Only for AX-level failures (element gone, messaging timeout) — callers
+/// degrade by treating the whole batch as empty, which matches the old
+/// per-attribute behavior where every read also failed.
+pub(crate) fn copy_multiple_attributes(
+    element: &AXUIElement,
+    names: &[&str],
+) -> Result<Vec<Option<CFRetained<CFType>>>, AXError> {
+    unsafe {
+        let cfnames: Vec<CFRetained<CFString>> =
+            names.iter().map(|n| CFString::from_str(n)).collect();
+        let attributes = CFArray::from_retained_objects(&cfnames);
+        let mut raw: *const CFArray = std::ptr::null();
+        let err = element.copy_multiple_attribute_values(
+            attributes.as_opaque(),
+            objc2_application_services::AXCopyMultipleAttributeOptions(0), // options=0: fill every slot (kCFNull on failure)
+            NonNull::from(&mut raw),
+        );
+        if err != AXError::Success || raw.is_null() {
+            return Err(err);
+        }
+        // SAFETY: +1 retained CFArrayRef (Copy rule) on Success.
+        let array = CFRetained::from_raw(NonNull::new_unchecked(raw as *mut CFArray));
+        // SAFETY: every entry is a CFTypeRef (some may be kCFNull).
+        let typed = array.cast_unchecked::<CFType>();
+        let mut out = Vec::with_capacity(names.len());
+        for i in 0..names.len() {
+            // `get` retains each element (+1); kCFNull marks a failed read.
+            match typed.get(i) {
+                Some(item) if item.downcast_ref::<CFNull>().is_some() => out.push(None),
+                Some(item) => out.push(Some(item)),
+                None => out.push(None),
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// Copy the list of actions this element supports (e.g. AXPress, AXIncrement).
 pub(crate) fn copy_action_names(element: &AXUIElement) -> Vec<String> {
     unsafe {
@@ -500,15 +571,28 @@ pub(crate) fn copy_action_names(element: &AXUIElement) -> Vec<String> {
 
 /// Recursively walk the AX tree, bounded by `max_depth`.
 fn walk(element: &AXUIElement, depth: usize, max_depth: usize) -> AxNode {
-    let role = copy_string_attribute(element, "AXRole").unwrap_or_default();
-    let title = copy_string_attribute(element, "AXTitle");
-    let description = copy_string_attribute(element, "AXDescription");
+    // One batched IPC round-trip for every attribute the tree shows (was 14
+    // separate calls per node). Batch failure (element gone / timeout) yields
+    // an empty vec — every read degrades to None, same as the old per-read
+    // failures.
+    let values = copy_multiple_attributes(element, BATCH_ATTRIBUTES).unwrap_or_default();
+    let string_at = |i: usize| -> Option<String> {
+        values
+            .get(i)
+            .cloned()
+            .flatten()
+            .and_then(|v| v.downcast_ref::<CFString>().map(|s| s.to_string()))
+    };
 
-    // Read the remaining display attributes (one IPC call each).
+    let role = string_at(BATCH_ROLE).unwrap_or_default();
+    let title = string_at(BATCH_TITLE);
+    let description = string_at(BATCH_DESCRIPTION);
+
+    // Read the remaining display attributes from the same batch.
     let mut attributes: Vec<AxAttr> = Vec::new();
-    for name in DISPLAY_ATTRIBUTES {
-        if let Ok(Some(value)) = copy_attribute(element, name) {
-            if let Some(rendered) = cftype_to_string(&value) {
+    for (i, name) in DISPLAY_ATTRIBUTES.iter().enumerate() {
+        if let Some(Some(value)) = values.get(BATCH_DISPLAY_START + i) {
+            if let Some(rendered) = cftype_to_string(value) {
                 if !rendered.is_empty() {
                     attributes.push(AxAttr {
                         name: (*name).to_string(),
@@ -540,7 +624,7 @@ fn walk(element: &AXUIElement, depth: usize, max_depth: usize) -> AxNode {
 
     let mut children = Vec::new();
     if depth < max_depth {
-        if let Ok(Some(value)) = copy_attribute(element, "AXChildren") {
+        if let Some(Some(value)) = values.get(BATCH_CHILDREN) {
             unsafe {
                 if let Some(array) = value.downcast_ref::<CFArray>() {
                     // Every entry of AXChildren is an AXUIElement.
@@ -721,5 +805,94 @@ pub fn perform_action_for_path(pid: i32, path: &[usize], action: &str) -> Result
                 ax_error_description(err)
             ))
         }
+    }
+}
+
+/// Does `node` match a relocation hint (role exact, label case-insensitive
+/// substring; empty label matches any)? Used by [`find_path_by_hint`] and kept
+/// as a pure function so the matching rule is unit-testable.
+fn node_matches_hint(node: &AxNode, role: &str, label: &str) -> bool {
+    if node.role != role {
+        return false;
+    }
+    let label = label.trim().to_lowercase();
+    label.is_empty() || node.label.to_lowercase().contains(&label)
+}
+
+/// Depth-first search for the first node matching `role` + `label`, recording
+/// the child-index path along the way. Module-level so the matching order is
+/// unit-testable.
+fn search_by_hint(
+    node: &AxNode,
+    path: &mut Vec<usize>,
+    role: &str,
+    label: &str,
+) -> Option<Vec<usize>> {
+    if node_matches_hint(node, role, label) {
+        return Some(path.clone());
+    }
+    for (i, child) in node.children.iter().enumerate() {
+        path.push(i);
+        if let Some(found) = search_by_hint(child, path, role, label) {
+            return Some(found);
+        }
+        path.pop();
+    }
+    None
+}
+
+/// Re-locate an element whose child-index path has gone stale (UI changed
+/// after the tree dump): walks the tree at the same bounded depth as
+/// [`build_tree_for_pid`]'s default and returns the fresh path of the first
+/// node matching `role` (exact) + `label` (substring, case-insensitive).
+///
+/// # Errors
+/// Untrusted process, tree read failure, or no matching element.
+pub fn find_path_by_hint(pid: i32, role: &str, label: &str) -> Result<Vec<usize>, String> {
+    let root = build_tree_for_pid(pid, 8)?;
+    let mut path = Vec::new();
+    search_by_hint(&root, &mut path, role, label)
+        .ok_or_else(|| format!("自动重定位失败: 未找到 role={role} label={label} 的元素"))
+}
+
+#[cfg(test)]
+mod relocate_hint_tests {
+    use super::*;
+
+    fn node(role: &str, label: &str, children: Vec<AxNode>) -> AxNode {
+        AxNode {
+            label: label.to_string(),
+            role: role.to_string(),
+            depth: 0,
+            attributes: Vec::new(),
+            actions: Vec::new(),
+            children,
+        }
+    }
+
+    #[test]
+    fn matches_exact_role_and_substring_label() {
+        let n = node("AXButton", "Save File", Vec::new());
+        assert!(node_matches_hint(&n, "AXButton", "save"));
+        assert!(node_matches_hint(&n, "AXButton", "SAVE"));
+        assert!(node_matches_hint(&n, "AXButton", ""));
+        assert!(!node_matches_hint(&n, "AXTextField", "save"));
+        assert!(!node_matches_hint(&n, "AXButton", "delete"));
+    }
+
+    #[test]
+    fn search_finds_first_depth_first_match() {
+        let tree = node(
+            "AXApplication",
+            "App",
+            vec![
+                node("AXWindow", "Main", vec![node("AXButton", "OK", Vec::new())]),
+                node("AXWindow", "Other", vec![node("AXButton", "OK", Vec::new())]),
+            ],
+        );
+        let mut path = Vec::new();
+        let found = search_by_hint(&tree, &mut path, "AXButton", "OK");
+        // First depth-first match: window 0 → button 0.
+        assert_eq!(found, Some(vec![0, 0]));
     }
 }

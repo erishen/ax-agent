@@ -265,16 +265,58 @@ pub fn ax_tree(pid: i32, depth: Option<u32>) -> Result<AxNode, String> {
     ax_core::build_tree_for_pid(pid, max_depth)
 }
 
+/// Optional auto-relocation hint: when an action fails because its child-index
+/// path went stale (the UI changed after the tree was dumped), the command
+/// re-searches the tree by `role` + `label` and retries once.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RelocateHint {
+    pub role: String,
+    pub label: String,
+}
+
+/// Run `f` on the element at `path`; on a stale-path failure (message starts
+/// with the "路径失效" marker used by the path walkers), re-locate via `hint`
+/// and retry once. All other failures pass through untouched.
+fn with_relocate<F>(pid: i32, path: &[usize], hint: &Option<RelocateHint>, f: F) -> Result<(), String>
+where
+    F: Fn(&[usize]) -> Result<(), String>,
+{
+    match f(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.starts_with("路径失效") => {
+            let Some(h) = hint else {
+                return Err(e);
+            };
+            let fresh = ax_core::find_path_by_hint(pid, &h.role, &h.label)?;
+            f(&fresh).map_err(|e2| {
+                format!("路径失效后已按 role/label 重定位并重试，仍失败: {e2}")
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Perform `action` (e.g. "AXPress") on the element addressed by `path`.
 /// The path is the list of child indices from the app root, as captured in
 /// the frontend while building the tree.
 ///
+/// When the path is stale and `relocate` carries the element's role/label,
+/// the command re-locates the element and retries once.
+///
 /// # Errors
-/// Returns a message when the path is stale or the action fails.
+/// Returns a message when the path is stale (and relocation fails) or the
+/// action fails.
 #[tauri::command(async)]
-pub fn ax_perform_action(pid: i32, path: Vec<u32>, action: String) -> Result<(), String> {
+pub fn ax_perform_action(
+    pid: i32,
+    path: Vec<u32>,
+    action: String,
+    relocate: Option<RelocateHint>,
+) -> Result<(), String> {
     let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    ax_core::perform_action_for_path(pid, &path, &action)
+    with_relocate(pid, &path, &relocate, |fresh| {
+        ax_core::perform_action_for_path(pid, fresh, &action)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -284,32 +326,62 @@ pub fn ax_perform_action(pid: i32, path: Vec<u32>, action: String) -> Result<(),
 /// Write text into the element's `AXValue` ("type into this field" without
 /// synthetic keyboard events).
 ///
+/// When the path is stale and `relocate` carries the element's role/label,
+/// the command re-locates the element and retries once.
+///
 /// # Errors
-/// Stale path or the element's AXValue is not settable.
+/// Stale path (and relocation fails) or the element's AXValue is not settable.
 #[tauri::command(async)]
-pub fn ax_set_value(pid: i32, path: Vec<u32>, text: String) -> Result<(), String> {
+pub fn ax_set_value(
+    pid: i32,
+    path: Vec<u32>,
+    text: String,
+    relocate: Option<RelocateHint>,
+) -> Result<(), String> {
     let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    ax_act::set_value_for_path(pid, &path, &text)
+    with_relocate(pid, &path, &relocate, |fresh| {
+        ax_act::set_value_for_path(pid, fresh, &text)
+    })
 }
 
 /// Move an element (typically a window) by setting its `AXPosition`.
 ///
+/// When the path is stale and `relocate` carries the element's role/label,
+/// the command re-locates the element and retries once.
+///
 /// # Errors
-/// Stale path or AXPosition unsupported.
+/// Stale path (and relocation fails) or AXPosition unsupported.
 #[tauri::command(async)]
-pub fn ax_set_position(pid: i32, path: Vec<u32>, x: f64, y: f64) -> Result<(), String> {
+pub fn ax_set_position(
+    pid: i32,
+    path: Vec<u32>,
+    x: f64,
+    y: f64,
+    relocate: Option<RelocateHint>,
+) -> Result<(), String> {
     let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    ax_act::set_position_for_path(pid, &path, x, y)
+    with_relocate(pid, &path, &relocate, |fresh| {
+        ax_act::set_position_for_path(pid, fresh, x, y)
+    })
 }
 
 /// Grab keyboard focus for the element (`AXFocused = true`).
 ///
+/// When the path is stale and `relocate` carries the element's role/label,
+/// the command re-locates the element and retries once.
+///
 /// # Errors
-/// Stale path or the element cannot take focus.
+/// Stale path (and relocation fails) or the element cannot take focus.
 #[tauri::command(async)]
-pub fn ax_focus_element(pid: i32, path: Vec<u32>) -> Result<(), String> {
+pub fn ax_focus_element(
+    pid: i32,
+    path: Vec<u32>,
+    relocate: Option<RelocateHint>,
+) -> Result<(), String> {
     let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    ax_act::focus_element_for_path(pid, &path)
+    with_relocate(pid, &path, &relocate, |fresh| {
+        ax_act::focus_element_for_path(pid, fresh)
+    })
 }
 
 /// Which UI element is under the given global screen position? (The
@@ -389,7 +461,7 @@ fn collect_windows<'a>(node: &'a ExportNode, out: &mut Vec<&'a ExportNode>) {
 /// Pick the largest window that has both AXPosition and AXSize — apps expose
 /// several AXWindow nodes (QQLive: an extra `Window「Window」` without size),
 /// and the first one in tree order is not necessarily the real main window.
-fn find_window_node<'a>(tree: &'a ExportNode) -> Option<&'a ExportNode> {
+fn find_window_node(tree: &ExportNode) -> Option<&ExportNode> {
     let mut windows = Vec::new();
     collect_windows(tree, &mut windows);
     windows
@@ -433,6 +505,9 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+/// Captured window: (png path, CG window number, position, size) in points.
+type CapturedWindow = (std::path::PathBuf, i64, (f64, f64), (f64, f64));
+
 /// Capture the app's main window (`screencapture -l`) into a temp PNG.
 /// Returns (temp path, window number, window AX position in points, AX size).
 ///
@@ -441,7 +516,7 @@ fn base64_encode(data: &[u8]) -> String {
 /// permission not granted.
 fn capture_window_png(
     pid: i32,
-) -> Result<(std::path::PathBuf, i64, (f64, f64), (f64, f64)), String> {
+) -> Result<CapturedWindow, String> {
     if !ax_core::is_process_trusted(false) {
         return Err("未授予辅助功能权限 (Accessibility permission not granted)".to_string());
     }
@@ -581,7 +656,7 @@ pub fn ax_ocr_window(pid: i32) -> Result<Vec<OcrScreenWord>, String> {
     let res = crate::ocr::ocr_image(&out).map_err(|e| format!("OCR 失败: {e}"))?;
     let _ = std::fs::remove_file(&out);
     // Map image pixels → window points (handles Retina scale factors).
-    let img = (res.width as f64, res.height as f64);
+    let img = (res.width, res.height);
     Ok(res
         .words
         .into_iter()
@@ -603,6 +678,38 @@ pub fn ax_ocr_window(pid: i32) -> Result<Vec<OcrScreenWord>, String> {
             }
         })
         .collect())
+}
+
+/// Result of waiting for a UI change on a pid (AX notifications or timeout).
+#[derive(Clone, serde::Serialize)]
+pub struct ObserveWaitResult {
+    pub changed: bool,
+    pub waited_secs: u64,
+}
+
+/// Wait up to `timeout` seconds for the app's UI to change, waking early on a
+/// real AX notification when possible. Exposed to the agent as the `wait_for`
+/// tool so long tasks can synchronize on app launch / list loading instead of
+/// blind sleeps. Blocking wait runs on a background thread; `timeout` is
+/// clamped to 10 s to bound the call.
+#[tauri::command(async)]
+pub async fn ax_observe_wait(pid: i32, timeout: u64) -> Result<ObserveWaitResult, String> {
+    let timeout = timeout.clamp(0, 10);
+    tauri::async_runtime::spawn_blocking(move || {
+        let baseline = crate::ax_act::last_trigger_bump();
+        // Best-effort fast path: wake early on a real UI notification.
+        let _ = crate::ax_act::register_for_pid(pid);
+        crate::ax_act::wait_for_change(timeout)
+            .map_err(|e| format!("等待失败: {e}"))?;
+        let changed =
+            !crate::ax_act::observer_dead() && crate::ax_act::has_bumped_since(baseline);
+        Ok(ObserveWaitResult {
+            changed,
+            waited_secs: timeout,
+        })
+    })
+    .await
+    .map_err(|e| format!("等待任务异常: {e}"))?
 }
 
 #[cfg(test)]

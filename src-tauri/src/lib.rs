@@ -90,7 +90,7 @@ fn append_session_log(app: tauri::AppHandle, text: String) -> Result<String, Str
         .map_err(|e| format!("打开日志失败: {e}"))?;
     let ts = utc_now();
     writeln!(f, "\n===== {ts} =====").map_err(|e| format!("写入日志失败: {e}"))?;
-    write!(f, "{text}\n").map_err(|e| format!("写入日志失败: {e}"))?;
+    writeln!(f, "{text}").map_err(|e| format!("写入日志失败: {e}"))?;
     Ok(file.display().to_string())
 }
 
@@ -135,6 +135,7 @@ pub fn run() {
             commands::ax_screenshot_window,
             commands::ax_window_bounds,
             commands::ax_ocr_window,
+            commands::ax_observe_wait,
             commands::ax_scroll,
             commands::ax_scroll_to_visible,
             commands::ax_named_action,
@@ -161,7 +162,8 @@ pub fn run() {
             llm::llm_skills,
             llm::llm_skill,
             llm::llm_catalog,
-            append_session_log
+            append_session_log,
+            mcp_client::mcp_pool_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

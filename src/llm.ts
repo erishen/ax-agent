@@ -218,6 +218,17 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
     ),
   },
   {
+    name: "wait_for",
+    description: "等待界面状态变化，用于同步：刚打开应用等它加载完、点击后等弹窗/新元素出现、等列表刷新。内部用 macOS 界面变化通知等待（非盲 sleep）；可给 element 关键词等某个元素出现，不给则纯等界面发生变化。每次最多等 timeout 秒（默认 8，上限 10），超时未满足会返回当前界面摘要供你决定下一步。",
+    parameters: obj(
+      {
+        element: { type: "string", description: "可选：等待出现的元素关键词（标题/值/角色）" },
+        timeout: { type: "number", description: "可选：最多等待秒数，默认 8，上限 10" },
+      },
+      [],
+    ),
+  },
+  {
     name: "find",
     description: "在当前界面大纲中按关键词搜索元素，返回匹配列表。",
     parameters: obj({ keyword: { type: "string" } }, ["keyword"]),

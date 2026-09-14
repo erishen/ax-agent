@@ -55,12 +55,20 @@ export function fetchTree(pid: number, depth = 8): Promise<AxNode> {
   return invoke("ax_tree", { pid, depth });
 }
 
+/** Hint for Rust-side auto-relocation when a child-index path goes stale:
+ * the element's AXRole + tree label (role exact, label substring match). */
+export interface RelocateHint {
+  role: string;
+  label: string;
+}
+
 export function performAction(
   pid: number,
   path: number[],
   action: string,
+  relocate?: RelocateHint,
 ): Promise<void> {
-  return invoke("ax_perform_action", { pid, path, action });
+  return invoke("ax_perform_action", { pid, path, action, relocate: relocate ?? null });
 }
 
 // --- Computer-use actuation (ax_act.rs) ---
@@ -70,13 +78,18 @@ export function setValue(
   pid: number,
   path: number[],
   text: string,
+  relocate?: RelocateHint,
 ): Promise<void> {
-  return invoke("ax_set_value", { pid, path, text });
+  return invoke("ax_set_value", { pid, path, text, relocate: relocate ?? null });
 }
 
 /** Grab keyboard focus (AXFocused = true). */
-export function focusElement(pid: number, path: number[]): Promise<void> {
-  return invoke("ax_focus_element", { pid, path });
+export function focusElement(
+  pid: number,
+  path: number[],
+  relocate?: RelocateHint,
+): Promise<void> {
+  return invoke("ax_focus_element", { pid, path, relocate: relocate ?? null });
 }
 
 /** Move an element (window) via AXPosition. */
@@ -85,8 +98,9 @@ export function setPosition(
   path: number[],
   x: number,
   y: number,
+  relocate?: RelocateHint,
 ): Promise<void> {
-  return invoke("ax_set_position", { pid, path, x, y });
+  return invoke("ax_set_position", { pid, path, x, y, relocate: relocate ?? null });
 }
 
 /** Which element is under this global screen point (any app)? */
@@ -112,6 +126,15 @@ export function screenshotWindow(pid: number): Promise<ScreenshotInfo> {
 /** OCR the app's main window; every text span with screen coordinates. */
 export function ocrWindow(pid: number): Promise<OcrScreenWord[]> {
   return invoke("ax_ocr_window", { pid });
+}
+
+/** Wait up to `timeout` s for the app's UI to change (AX notifications, or
+ *  timeout — caller re-polls). Mirrors RPC `ax.observe.wait`. */
+export function observeWait(
+  pid: number,
+  timeout: number,
+): Promise<{ changed: boolean; waited_secs: number }> {
+  return invoke("ax_observe_wait", { pid, timeout });
 }
 
 /** Main on-screen window frame of `pid` in screen points (top-left origin). */
