@@ -608,7 +608,11 @@ async function runTool(
         const head = filter
           ? `${name} 中与「${filter}」相关的元素`
           : `${name} (pid ${pid}) 的界面`;
-        const summary = `${head}：\n${renderOutline(shown) || "（无匹配元素）"}`;
+        const rendered = renderOutline(shown);
+        const emptyHint = filter
+          ? "（无匹配元素）"
+          : "（未发现可读元素——若该应用界面有图片或文字内容，它可能是自绘 UI，请改用 ocr 读取屏幕文字）";
+        const summary = `${head}：\n${rendered || emptyHint}`;
         const key = `${name}:${pid}`;
         let result = summary;
         if (lastRead && lastRead.key === key && lastRead.text === summary) {
@@ -622,6 +626,7 @@ async function runTool(
       case "wait_for": {
         const keyword = str("element");
         const ocrText = str("text");
+        const gone = args.gone === true;
         const timeout = Math.min(Math.max(Number(args.timeout) || 8, 1), 10);
         const pid = state.pid;
         if (pid === null)
@@ -634,7 +639,7 @@ async function runTool(
           const w = await observeWait(pid, 2);
           waited += w.waited_secs;
           if (ocrText) {
-            // 自绘 UI：用 OCR 等某段屏幕文字出现。
+            // 自绘 UI：用 OCR 等某段屏幕文字出现（gone=false）或消失（gone=true）。
             let words: OcrScreenWord[] = [];
             try {
               words = await ocrWindow(pid);
@@ -643,9 +648,12 @@ async function runTool(
             }
             lastWords = words;
             const hit = words.find((x) => x.text.includes(ocrText));
-            if (hit) {
+            if (gone ? !hit : hit) {
+              const where = hit
+                ? ` (${Math.round(hit.x)}, ${Math.round(hit.y)})`
+                : "";
               return {
-                result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已出现于 (${Math.round(hit.x)}, ${Math.round(hit.y)})`,
+                result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}`,
                 state,
               };
             }
@@ -658,10 +666,12 @@ async function runTool(
             }
             if (keyword) {
               const hits = findNodes(outline, keyword);
-              if (hits.length > 0) {
+              if (gone ? hits.length === 0 : hits.length > 0) {
                 state = { ...state, outline };
                 return {
-                  result: `等待完成（${waited}s）：「${keyword}」已出现\n${renderOutline(hits)}`,
+                  result: gone
+                    ? `等待完成（${waited}s）：「${keyword}」已消失`
+                    : `等待完成（${waited}s）：「${keyword}」已出现\n${renderOutline(hits)}`,
                   state,
                 };
               }
@@ -674,11 +684,11 @@ async function runTool(
           }
         }
         const tail = ocrText
-          ? `屏幕文字「${ocrText}」在 ${timeout}s 内未出现。当前可见文字：\n${
+          ? `屏幕文字「${ocrText}」在 ${timeout}s 内未${gone ? "消失" : "出现"}。当前可见文字：\n${
               lastWords.slice(0, 12).map((x) => x.text).join(" / ") || "（无）"
             }`
           : keyword
-            ? `「${keyword}」在 ${timeout}s 内未出现`
+            ? `「${keyword}」在 ${timeout}s 内未${gone ? "消失" : "出现"}`
             : `界面在 ${timeout}s 内无变化`;
         return {
           result: `${tail}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,

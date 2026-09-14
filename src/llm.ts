@@ -219,11 +219,12 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "wait_for",
-    description: "等待界面状态变化，用于同步：刚打开应用等它加载完、点击后等弹窗/新元素出现、等列表刷新。内部用 macOS 界面变化通知等待（非盲 sleep）。等待目标二选一：element（AX 树元素关键词，普通应用）或 text（屏幕 OCR 文字，自绘 UI 应用如视频/游戏——用截图识别等某段文字出现，如「播放中」「加载完成」）；都不给则纯等界面发生变化。每次最多等 timeout 秒（默认 8，上限 10），超时未满足会返回当前界面摘要供你决定下一步。",
+    description: "等待界面状态变化，用于同步：刚打开应用等它加载完、点击后等弹窗/新元素出现、等列表刷新、等弹窗关闭或播放结束。内部用 macOS 界面变化通知等待（非盲 sleep）。等待目标二选一：element（AX 树元素关键词，普通应用）或 text（屏幕 OCR 文字，自绘 UI 应用如视频/游戏——用截图识别等某段文字出现或消失，如「播放中」「加载完成」）；都不给则纯等界面发生变化。gone=true 时改为等待目标消失（如「弹窗关闭」「播放结束」），默认 false=等待出现。每次最多等 timeout 秒（默认 8，上限 10），超时未满足会返回当前界面摘要供你决定下一步。",
     parameters: obj(
       {
-        element: { type: "string", description: "可选：等待出现的 AX 元素关键词（标题/值/角色），普通应用用这个" },
-        text: { type: "string", description: "可选：等待出现在屏幕上的文字（自绘 UI 用 OCR 识别，如「播放中」），与 element 二选一" },
+        element: { type: "string", description: "可选：等待出现/消失的 AX 元素关键词（标题/值/角色），普通应用用这个" },
+        text: { type: "string", description: "可选：等待出现/消失的屏幕文字（自绘 UI 用 OCR 识别，如「播放中」），与 element 二选一" },
+        gone: { type: "boolean", description: "可选：true=等待目标消失（如弹窗关闭、播放结束），默认 false=等待出现" },
         timeout: { type: "number", description: "可选：最多等待秒数，默认 8，上限 10" },
       },
       [],
