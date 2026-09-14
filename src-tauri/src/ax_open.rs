@@ -113,9 +113,7 @@ fn find_installed(needle: &str) -> Option<crate::ax_core::InstalledApp> {
     if let Some(hit) = apps.iter().find(|a| name_matches(a, needle)) {
         return Some(hit.clone());
     }
-    let Some(bundle) = alias_bundle(needle) else {
-        return None;
-    };
+    let bundle = alias_bundle(needle)?;
     apps.into_iter().find(|a| name_matches(a, &bundle))
 }
 

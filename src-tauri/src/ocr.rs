@@ -74,7 +74,7 @@ pub fn ocr_image(path: &Path) -> Result<OcrResult, String> {
     // Force Chinese + English so 中文海报/片名识别更稳。
     let langs: Retained<NSArray<NSString>> = ["zh-Hans", "zh-Hant", "en-US"]
         .into_iter()
-        .map(|l| NSString::from_str(l))
+        .map(NSString::from_str)
         .collect();
     request.setRecognitionLanguages(&langs);
 
@@ -123,13 +123,19 @@ pub fn ocr_image(path: &Path) -> Result<OcrResult, String> {
     })
 }
 
+/// (window number, position, size) in points — the CGWindowList fallback
+/// frame for self-drawn UIs.
+pub type WindowFrame = (i64, (f64, f64), (f64, f64));
+
+/// (area, window number, position, size) — internal best-window candidate.
+type BestWindow = (f64, i64, (f64, f64), (f64, f64));
+
 /// Find `pid`'s main on-screen window via CGWindowList — the fallback for
 /// self-drawn UIs (Electron/CEF) whose AX windows carry no
 /// AXPosition/AXSize. Takes the largest window by area.
 ///
-/// Returns `(kCGWindowNumber, position, size)` in points, top-left origin —
-/// the same coordinate space as AXPosition.
-pub fn find_window_cg(pid: i32) -> Option<(i64, (f64, f64), (f64, f64))> {
+/// Returns [`WindowFrame`] — the same coordinate space as AXPosition.
+pub fn find_window_cg(pid: i32) -> Option<WindowFrame> {
     find_window_cg_with(
         pid,
         core_graphics::window::kCGWindowListOptionOnScreenOnly,
@@ -139,14 +145,14 @@ pub fn find_window_cg(pid: i32) -> Option<(i64, (f64, f64), (f64, f64))> {
 /// Like [`find_window_cg`] but skips the on-screen filter: windows sitting on
 /// *another* macOS Space / minimized are still matched, so their true bounds
 /// (rather than an AX `(0,0)`) survive into OCR coordinate mapping.
-pub fn find_window_cg_all(pid: i32) -> Option<(i64, (f64, f64), (f64, f64))> {
+pub fn find_window_cg_all(pid: i32) -> Option<WindowFrame> {
     find_window_cg_with(pid, core_graphics::window::kCGWindowListOptionAll)
 }
 
 fn find_window_cg_with(
     pid: i32,
     option: core_graphics::window::CGWindowListOption,
-) -> Option<(i64, (f64, f64), (f64, f64))> {
+) -> Option<WindowFrame> {
     use core_foundation::base::TCFType;
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::number::CFNumber;
@@ -164,7 +170,7 @@ fn find_window_cg_with(
     }
 
     let list = core_graphics::window::copy_window_info(option, core_graphics::window::kCGNullWindowID)?;
-    let mut best: Option<(f64, i64, (f64, f64), (f64, f64))> = None;
+    let mut best: Option<BestWindow> = None;
     for i in 0..list.len() {
         // Each entry is a CFDictionary of window attributes.
         let entry: VoidDict = unsafe { CFDictionary::wrap_under_get_rule(*list.get(i)? as _) };

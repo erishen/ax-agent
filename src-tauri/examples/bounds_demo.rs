@@ -92,7 +92,7 @@ fn main() {
     //    higher-level APIs entirely).
     unsafe {
         use core_graphics::display::CGGetActiveDisplayList;
-        use core_graphics::geometry::CGPoint;
+        
         let mut ids = [0u32; 8];
         let mut count = 0;
         CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count);
@@ -111,7 +111,7 @@ fn main() {
 
 fn find_pid(needle: &str) -> i32 {
     let needle = needle.trim().to_lowercase();
-    for app in unsafe { NSWorkspace::sharedWorkspace().runningApplications() } {
+    for app in NSWorkspace::sharedWorkspace().runningApplications() {
         if app.isTerminated() || app.processIdentifier() == std::process::id() as i32 {
             continue;
         }
@@ -124,10 +124,8 @@ fn find_pid(needle: &str) -> i32 {
         }
     }
     println!("no running app matches «{needle}»; falling back to frontmost");
-    unsafe {
-        NSWorkspace::sharedWorkspace()
-            .frontmostApplication()
-            .map(|a| a.processIdentifier())
-            .unwrap_or(-1)
-    }
+    NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|a| a.processIdentifier())
+        .unwrap_or(-1)
 }

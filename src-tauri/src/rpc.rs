@@ -476,7 +476,7 @@ fn capture_screenshot(pid: i32) -> Result<commands::ScreenshotInfo, String> {
     })
 }
 
-fn find_window_node<'a>(node: &'a ax_core::ExportNode) -> Option<&'a ax_core::ExportNode> {
+fn find_window_node(node: &ax_core::ExportNode) -> Option<&ax_core::ExportNode> {
     if node.role == "AXWindow" {
         return Some(node);
     }

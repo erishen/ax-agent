@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "AX Explorer: Tauri v2 + React + TypeScript explorer for the macOS Accessibility API (AXUIElement)"
 authors = ["erishen"]
 edition = "2021"
+# Multiple bins live in src/bin/ (ax_ocr, probe — standalone debug tools), so
+# bare `cargo run` / `tauri dev` must default to the Tauri app binary.
+default-run = "ax-explorer"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

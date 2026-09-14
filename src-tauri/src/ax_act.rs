@@ -44,7 +44,8 @@ pub(crate) static LAST_TRIGGER_BUMP: AtomicU32 = AtomicU32::new(0);
 
 /// Channels for AXObserver notifications: one global sender kept in the static
 /// tuple; waiters take turns receiving on the shared receiver.
-static CHANGE: LazyLock<(Sender<i32>, Mutex<Option<Receiver<i32>>>)> = LazyLock::new(|| {
+type ChangeChannel = (Sender<i32>, Mutex<Option<Receiver<i32>>>);
+static CHANGE: LazyLock<ChangeChannel> = LazyLock::new(|| {
     let (tx, rx) = channel::<i32>();
     (tx, Mutex::new(Some(rx)))
 });
@@ -69,7 +70,7 @@ unsafe extern "C-unwind" fn on_ax_change(
     _notification: NonNull<CFString>,
     _refcon: *mut c_void,
 ) {
-    let _ = (*CHANGE).0.send(1);
+    let _ = CHANGE.0.send(1);
 }
 
 /// Return the value of the trigger counter.
@@ -438,11 +439,7 @@ fn keycode_for_name(name: &str) -> Option<CGKeyCode> {
         // string override below they type correctly on any layout.
         s if s.chars().count() == 1 => {
             let c = s.chars().next()?;
-            if let Some(kc) = ansi_keycode(c) {
-                kc
-            } else {
-                return None;
-            }
+            ansi_keycode(c)?
         }
         _ => return None,
     })
@@ -893,12 +890,12 @@ pub fn element_at_screen_position(x: f32, y: f32) -> Result<HitElement, String> 
         let element = hit_element_at_screen_position(x, y)?;
         let mut pid: i32 = 0;
         let _ = element.pid(NonNull::from(&mut pid));
-        return Ok(HitElement {
+        Ok(HitElement {
             pid,
             role: copy_string_attribute(&element, "AXRole").unwrap_or_default(),
             title: copy_string_attribute(&element, "AXTitle").unwrap_or_default(),
             description: copy_string_attribute(&element, "AXDescription").unwrap_or_default(),
-        });
+        })
     }
 }
 
