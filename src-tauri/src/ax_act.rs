@@ -450,6 +450,10 @@ fn keycode_for_name(name: &str) -> Option<CGKeyCode> {
         "down" | "downarrow" | "arrowdown" => KeyCode::DOWN_ARROW,
         "left" | "leftarrow" | "arrowleft" => KeyCode::LEFT_ARROW,
         "right" | "rightarrow" | "arrowright" => KeyCode::RIGHT_ARROW,
+        "home" => KeyCode::HOME,
+        "end" => KeyCode::END,
+        "pageup" | "pgup" => KeyCode::PAGE_UP,
+        "pagedown" | "pgdn" => KeyCode::PAGE_DOWN,
         // Punctuation at ANSI positions.
         "-" | "minus" => KeyCode::ANSI_MINUS,
         "=" | "equal" => KeyCode::ANSI_EQUAL,
@@ -576,7 +580,7 @@ pub fn press_key_combo(combo: &str, target: Option<i32>) -> Result<(), String> {
     }
     let key = key_name.ok_or_else(|| format!("组合键缺少主键: {combo}"))?;
     let keycode = keycode_for_name(&key).ok_or_else(|| {
-        format!("不认识的按键「{key}」（支持 enter/tab/space/delete/esc/方向键/字母/数字/常用标点）")
+        format!("不认识的按键「{key}」（支持 enter/tab/space/delete/esc/方向键/home/end/pageup/pagedown/字母/数字/常用标点）")
     })?;
     post_key_tap(keycode, flags, target)?;
     Ok(())

@@ -212,7 +212,7 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
     parameters: obj(
       {
         app: { type: "string", description: "可选：改为读取这个应用" },
-        filter: { type: "string", description: "可选：只返回标题/值/角色匹配此关键词的元素" },
+        filter: { type: "string", description: "可选：只返回标题/值/角色匹配的元素；支持多关键词（空格或逗号分隔，任一命中即可），如「按钮 输入框」" },
       },
       [],
     ),
@@ -315,9 +315,9 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "key",
-    description: "按一个键或快捷键（合成键盘事件，发给当前聚焦的元素）：回车发送、Esc 关闭弹窗、Cmd+F 搜索、方向键在自定义列表里导航。写法如 enter / esc / Cmd+F / Cmd+Shift+T / Alt+Left。",
+    description: "按一个键或快捷键（合成键盘事件，发给当前聚焦的元素）：回车发送、Esc 关闭弹窗、方向键在列表里导航、Tab 切换焦点。系统级快捷键可直接用：Cmd+W 关闭窗口、Cmd+Q 退出、Cmd+N 新建、Cmd+Z 撤销、Cmd+C/V/X 复制粘贴剪切、Cmd+A 全选、Cmd+F 搜索、Cmd+Home/End 到文档首/尾、PageUp/PageDown 翻页。写法如 enter / esc / Cmd+F / Cmd+Shift+T / Alt+Left。",
     parameters: obj(
-      { combo: { type: "string", description: "键或组合键，如 enter、esc、Cmd+F、Alt+Left" } },
+      { combo: { type: "string", description: "键或组合键，如 enter、esc、Cmd+F、Alt+Left、Cmd+W" } },
       ["combo"],
     ),
   },

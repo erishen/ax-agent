@@ -233,6 +233,21 @@ function findNodes(outline: OutlineNode[], keyword: string): OutlineNode[] {
   );
 }
 
+/** OR-match against several keywords (comma/space separated, e.g. read_screen
+ *  filter "按钮 输入框" or "导出, 保存"). */
+function findNodesAny(outline: OutlineNode[], keywords: string[]): OutlineNode[] {
+  const ks = keywords.map((k) => k.trim().toLowerCase()).filter(Boolean);
+  if (!ks.length) return [];
+  return outline.filter((n) =>
+    ks.some(
+      (k) =>
+        n.label.toLowerCase().includes(k) ||
+        n.role.toLowerCase().includes(k) ||
+        n.value.toLowerCase().includes(k),
+    ),
+  );
+}
+
 async function treeOf(pid: number, depth: number): Promise<OutlineNode[]> {
   const tree = await fetchTree(pid, depth);
   return flatten(tree);
@@ -635,7 +650,9 @@ async function runTool(
         if (pid === null) return { result: "尚未选择应用，先用 open_app 打开一个", state };
         const outline = await treeOf(pid, 10);
         state = { ...state, pid, appName: name, outline };
-        const shown = filter ? findNodes(outline, filter) : outline;
+        const shown = filter
+          ? findNodesAny(outline, filter.split(/[,，\s]+/).filter(Boolean))
+          : outline;
         const head = filter
           ? `${name} 中与「${filter}」相关的元素`
           : `${name} (pid ${pid}) 的界面`;
