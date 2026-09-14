@@ -517,9 +517,38 @@ const DANGER_WORDS = [
   "永久删除", "清空聊天", "确认支付", "付款",
 ];
 
+/**
+ * Clamp a screen point into the session target's main window frame, so
+ * synthetic scroll/click/drag events never land on another app or the
+ * desktop when the model guesses out-of-window coordinates. Returns the
+ * corrected point plus a human note ("" when unchanged).
+ */
+async function clampToWindow(
+  pid: number | null,
+  x: number,
+  y: number,
+): Promise<{ x: number; y: number; note: string }> {
+  if (pid === null) return { x, y, note: "" };
+  try {
+    const b = await windowBounds(pid);
+    if (!b) return { x, y, note: "" };
+    const cx = Math.min(Math.max(x, b.x), b.x + b.w - 1);
+    const cy = Math.min(Math.max(y, b.y), b.y + b.h - 1);
+    if (cx !== x || cy !== y) {
+      return {
+        x: cx,
+        y: cy,
+        note: `（坐标 (${Math.round(x)}, ${Math.round(y)}) 不在目标应用窗口内，已校正为 (${Math.round(cx)}, ${Math.round(cy)})）`,
+      };
+    }
+  } catch {
+    /* 拿不到窗口就不校正 */
+  }
+  return { x, y, note: "" };
+}
+
 /** Why a tool call needs user confirmation, or "" if it's safe. */
-function dangerousReason(name: string, args: Record<string, unknown>): string {
-  switch (name) {
+function dangerousReason(name: string, args: Record<string, unknown>): string {  switch (name) {
     case "key": {
       const combo = String(args.combo ?? "").toLowerCase();
       if (/(enter|return)/.test(combo)) {
@@ -841,6 +870,7 @@ async function runTool(
         let x = Number(args.x);
         let y = Number(args.y);
         let resize: { w: number; h: number } | null = null;
+        let screenIdx = 0;
         const position = str("position");
         if (position) {
           // 语义摆放：主屏边界 + 窗口当前尺寸换算坐标。
@@ -857,7 +887,9 @@ async function runTool(
           if (!parsed.length) {
             return { result: `无法读取屏幕信息来换算 position=${position}，请改用 x/y`, state };
           }
-          const main = parsed[0];
+          const want = Number(args.screen);
+          screenIdx = Number.isInteger(want) ? want : 0;
+          const main = parsed[screenIdx] ?? parsed[0];
           const sb = await windowBounds(state.pid).catch(() => null);
           const ww = sb ? sb.w : 0;
           const wh = sb ? sb.h : 0;
@@ -904,10 +936,10 @@ async function runTool(
         return {
           result:
             position === "maximize"
-              ? "窗口已最大化铺满主屏"
+              ? `窗口已最大化铺满 ${screenIdx === 0 ? "主屏" : `显示器 ${screenIdx}`}`
               : `窗口已移到 (${Math.round(x)}, ${Math.round(y)})${
                   resize ? ` 并调整到 ${resize.w}x${resize.h}` : ""
-                }`,
+                }${screenIdx === 0 ? "" : `（显示器 ${screenIdx}）`}`,
           state,
         };
       }
@@ -951,28 +983,14 @@ async function runTool(
         }
         let x = Number(args.x) || 0;
         let y = Number(args.y) || 0;
-        let corrected = "";
         // 坐标自动校正：滚动合成事件必须落在目标应用窗口内，否则事件会
         // 落到别的应用/桌面上。拿目标窗口 frame，把越界坐标夹回窗口内。
-        if (state.pid !== null) {
-          try {
-            const b = await windowBounds(state.pid);
-            if (b) {
-              const cx = Math.min(Math.max(x, b.x), b.x + b.w - 1);
-              const cy = Math.min(Math.max(y, b.y), b.y + b.h - 1);
-              if (cx !== x || cy !== y) {
-                corrected = `（坐标 (${x}, ${y}) 不在目标应用窗口 [${Math.round(b.x)},${Math.round(b.y)} ${Math.round(b.w)}x${Math.round(b.h)}] 内，已校正为 (${cx}, ${cy})）`;
-                x = cx;
-                y = cy;
-              }
-            }
-          } catch {
-            /* 拿不到窗口就不校正 */
-          }
-        }
+        const clamped = await clampToWindow(state.pid, x, y);
+        x = clamped.x;
+        y = clamped.y;
         await scrollAt(x, y, lines, state.pid ?? undefined);
         return {
-          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${corrected}如需查看新内容请 read_screen 或 find。`,
+          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}如需查看新内容请 read_screen 或 find。`,
           state,
         };
       }
@@ -1031,11 +1049,12 @@ async function runTool(
         };
       }
       case "click_at": {
-        const x = Number(args.x);
-        const y = Number(args.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        const rawX = Number(args.x);
+        const rawY = Number(args.y);
+        if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
           return { result: "需要数字坐标 x, y", state };
         }
+        const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
         await clickAt(x, y, state.pid ?? undefined);
@@ -1044,21 +1063,22 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${x}, ${y}) 合成单击（目标应用已确认在前台）。界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。`, state };
       }
       case "double_click_at": {
-        const x = Number(args.x);
-        const y = Number(args.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        const rawX = Number(args.x);
+        const rawY = Number(args.y);
+        if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
           return { result: "需要数字坐标 x, y", state };
         }
+        const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
           if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 10) };
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${x}, ${y}) 合成双击（目标应用已确认在前台）。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}`, state };
       }
       case "drag": {
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
@@ -1066,10 +1086,13 @@ async function runTool(
           return { result: "需要数字坐标 from_x, from_y, to_x, to_y", state };
         }
         const steps = Number(args.steps);
-        const [fx, fy, tx, ty] = nums as [number, number, number, number];
-        await drag(fx, fy, tx, ty, Number.isFinite(steps) ? steps : undefined, state.pid ?? undefined);
+        const [fx0, fy0, tx0, ty0] = nums as [number, number, number, number];
+        const from = await clampToWindow(state.pid, fx0, fy0);
+        const to = await clampToWindow(state.pid, tx0, ty0);
+        const note = [from.note, to.note].filter(Boolean).join(" ");
+        await drag(from.x, from.y, to.x, to.y, Number.isFinite(steps) ? steps : undefined, state.pid ?? undefined);
         return {
-          result: `已从 (${fx}, ${fy}) 拖拽到 (${tx}, ${ty})。滑块/画布类结果用 read_screen 或 element_at 验证。`,
+          result: `已从 (${Math.round(from.x)}, ${Math.round(from.y)}) 拖拽到 (${Math.round(to.x)}, ${Math.round(to.y)})。${note}滑块/画布类结果用 read_screen 或 element_at 验证。`,
           state,
         };
       }

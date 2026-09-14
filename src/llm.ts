@@ -258,12 +258,13 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "move_window",
-    description: "移动当前应用的窗口：给 x/y（全局屏幕坐标 points）精确移动，或给 position 语义摆放（left 左缘 / right 右缘 / center 居中 / maximize 铺满主屏——自动换算坐标，maximize 会同时调整窗口尺寸）。摆分屏布局时建议配合 resize_window 先定尺寸。",
+    description: "移动当前应用的窗口：给 x/y（全局屏幕坐标 points）精确移动，或给 position 语义摆放（left 左缘 / right 右缘 / center 居中 / maximize 铺满——自动换算坐标，maximize 会同时调整窗口尺寸）。多显示器时用 screen 指定显示器 index（0=主屏，其余按 screen_info 顺序）。摆分屏布局时建议配合 resize_window 先定尺寸。",
     parameters: obj(
       {
         x: { type: "number", description: "目标 x（points）；给了 position 可省略" },
         y: { type: "number", description: "目标 y（points）；给了 position 可省略" },
         position: { type: "string", description: "可选：left/right/center/maximize 语义摆放" },
+        screen: { type: "number", description: "可选：显示器 index（0=主屏），仅 position 模式生效" },
       },
       [],
     ),
