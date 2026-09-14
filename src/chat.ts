@@ -41,6 +41,7 @@ import {
   setValue,
   tracePath,
   typeKeys,
+  windowBounds,
 } from "./api";
 import type { AxAppInfo, AxNode, OcrScreenWord } from "./types";
 import type { MenuEntry } from "./api";
@@ -635,17 +636,24 @@ async function runTool(
         let lastOutline = state.outline;
         let lastWords: OcrScreenWord[] = [];
         let waited = 0;
+        let step = 2;
         while (Date.now() < deadline) {
-          const w = await observeWait(pid, 2);
+          const w = await observeWait(pid, step);
           waited += w.waited_secs;
           if (ocrText) {
             // 自绘 UI：用 OCR 等某段屏幕文字出现（gone=false）或消失（gone=true）。
+            // 截图+识别开销大：界面文字没变化时拉长轮询间隔（2→5s），有变化
+            // 时回到密集轮询，兼顾响应速度与资源。
             let words: OcrScreenWord[] = [];
             try {
               words = await ocrWindow(pid);
             } catch {
               /* 截图/识别失败时继续等下一轮 */
             }
+            const stable =
+              words.length === lastWords.length &&
+              words.every((wd, i) => wd.text === lastWords[i]?.text);
+            step = stable ? Math.min(step + 1, 5) : 2;
             lastWords = words;
             const hit = words.find((x) => x.text.includes(ocrText));
             if (gone ? !hit : hit) {
@@ -855,9 +863,30 @@ async function runTool(
         if (!Number.isFinite(lines) || lines === 0) {
           return { result: "lines 必须是非零数字（正=向上，负=向下）", state };
         }
-        await scrollAt(Number(args.x) || 0, Number(args.y) || 0, lines, state.pid ?? undefined);
+        let x = Number(args.x) || 0;
+        let y = Number(args.y) || 0;
+        let corrected = "";
+        // 坐标自动校正：滚动合成事件必须落在目标应用窗口内，否则事件会
+        // 落到别的应用/桌面上。拿目标窗口 frame，把越界坐标夹回窗口内。
+        if (state.pid !== null) {
+          try {
+            const b = await windowBounds(state.pid);
+            if (b) {
+              const cx = Math.min(Math.max(x, b.x), b.x + b.w - 1);
+              const cy = Math.min(Math.max(y, b.y), b.y + b.h - 1);
+              if (cx !== x || cy !== y) {
+                corrected = `（坐标 (${x}, ${y}) 不在目标应用窗口 [${Math.round(b.x)},${Math.round(b.y)} ${Math.round(b.w)}x${Math.round(b.h)}] 内，已校正为 (${cx}, ${cy})）`;
+                x = cx;
+                y = cy;
+              }
+            }
+          } catch {
+            /* 拿不到窗口就不校正 */
+          }
+        }
+        await scrollAt(x, y, lines, state.pid ?? undefined);
         return {
-          result: `已在 (${args.x}, ${args.y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。如需查看新内容请 read_screen 或 find。`,
+          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${corrected}如需查看新内容请 read_screen 或 find。`,
           state,
         };
       }
