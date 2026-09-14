@@ -90,6 +90,32 @@ function shuffle<T>(arr: T[]): T[] {
   return out;
 }
 
+/**
+ * Apps excluded from the installed-app task pool unconditionally: their
+ * template tasks (记一条 / 交互演练 / 双窗对比 …) are unhandleable — no
+ * creatable or editable surface, camera/system helpers, or pure read-only
+ * info feeds — so clicking those chips makes the agent fail or loop.
+ *
+ * Mirrors the local `apps.hidden` list (kept in code so the filtering holds
+ * on any machine and even when the local config is absent); `apps.hidden`
+ * remains the extension point for per-machine additions.
+ */
+const APP_BLOCKLIST = new Set([
+  "siri",
+  "stocks",
+  "tips",
+  "news",
+  "podcasts",
+  "books",
+  "weather",
+  "photo booth",
+  // Self-drawn UIs (no semantic AX labels): generic templates fail on them.
+  // Tencent Video ships as QQLive.app; both bundle-name spellings appear in
+  // the scan across locales.
+  "qqlive",
+  "tenvideo",
+]);
+
 // ---------------------------------------------------------------------------
 // Built-in fallback (no installed-app / gateway data needed)
 // ---------------------------------------------------------------------------
@@ -135,25 +161,6 @@ const BUILTIN_AGENT: ExampleTask[] = [
     task:
       "分别打开 TextEdit 和备忘录，各读一遍界面，对比两者在「快速记一条笔记」" +
       "场景下的优劣（步骤数、可操作元素），给出推荐结论",
-    source: "builtin",
-  },
-];
-
-// ---------------------------------------------------------------------------
-// Pinned tasks that are ALWAYS the first chips (user's own tasks).
-// ---------------------------------------------------------------------------
-
-const PINNED_AGENT: ExampleTask[] = [
-  {
-    label: "🎬 腾讯视频按喜好推片",
-    task:
-      "打开腾讯视频。先了解我的画像：用 profile_search 查询「职业经历 年龄 人格特点」" +
-      "（注意：我的资料库没有现成的观影偏好，拿到画像特征后据此推断我可能喜欢的题材，" +
-      "例如 （画像推断题材：高质感剧情/悬疑推理/职场现实或解压治愈类））。" +
-      "再用 ocr 读腾讯视频首页的「你正在追」和热搜榜，看平台行为信号。结合画像推断与平台信号，" +
-      "进入「电影」频道，逐个浏览影片评分，挑一部评分 9 分以上、且题材和画像推断口味最接近的电影" +
-      "（详情页 ocr 复核评分与题材都符合），选中并点击播放，确认画面真的在播放（顶栏出现「播放中」或播放器控件出现）。" +
-      "最后把片名、评分、以及推荐理由（基于我的什么画像特征推断）一起报告给我",
     source: "builtin",
   },
 ];
@@ -297,10 +304,20 @@ async function sources(): Promise<ExampleSources> {
     hubCatalog().catch(() => null),
     localAppsConfig().catch(() => EMPTY_LOCAL),
   ]);
-  // Apply local pin/hide: pinned first, hidden removed entirely.
-  const pinned = installed.filter((a) => matchesName(local.pinned, a));
-  const rest = installed
-    .filter((a) => !matchesName(local.hidden, a) && !matchesName(local.pinned, a));
+  // Apply local pin/hide + the code-level blocklist. Blocklisted apps never
+  // generate template tasks — even when pinned (their templates are
+  // unhandleable; hand-written tasks via extra_tasks are unaffected).
+  const blocklisted = (a: InstalledApp) =>
+    APP_BLOCKLIST.has(a.bundle_name.toLowerCase());
+  const pinned = installed.filter(
+    (a) => !blocklisted(a) && matchesName(local.pinned, a),
+  );
+  const rest = installed.filter(
+    (a) =>
+      !blocklisted(a) &&
+      !matchesName(local.hidden, a) &&
+      !matchesName(local.pinned, a),
+  );
   const ordered = [...pinned, ...rest];
   cache = {
     installed: ordered,
@@ -365,11 +382,11 @@ export async function exampleBatch(): Promise<ExampleTask[]> {
   const rotating = BUILTIN_AGENT[builtinCursor % BUILTIN_AGENT.length];
   builtinCursor += 1;
 
-  // Pinned tasks go to the very front of every batch, in order.
-  const need = BATCH - PINNED_AGENT.length - 1;
+  // One fixed builtin slot + app/gateway/local tasks for the rest.
+  const need = BATCH - 1;
   const tail: ExampleTask[] =
     tailPool.length >= need
       ? tailPool.slice(0, need)
       : tailPool;
-  return [...PINNED_AGENT, rotating, ...tail];
+  return [rotating, ...tail];
 }
