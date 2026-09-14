@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Fast pre-commit gate for ax-explorer: TypeScript type check on staged .ts
+# files. Rust changes are verified via `make lint` / `cargo test` — running
+# cargo here would contend with `make dev`'s watch build over the shared
+# work/rust target (and its macro cache). Skip this gate with
+# `git commit --no-verify`.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if git diff --cached --name-only --diff-filter=ACM | grep -q '\.ts$'; then
+  pnpm exec tsc --noEmit
+fi

@@ -167,6 +167,14 @@ pnpm tauri dev      # 开发模式
 pnpm tauri build    # 产出 .app / .dmg（Dock 图标用 app-icon.svg 生成）
 ```
 
+### 提交前检查
+
+- 完整验证：`make lint`（tsc + `clippy --all-targets -D warnings`）、`cargo test --lib`。
+- pre-commit hook（`.githooks/pre-commit`，已用 `git config core.hooksPath .githooks` 安装）：
+  对暂存的 `.ts` 改动自动跑 `tsc --noEmit` 做快速门禁；Rust 改动**不**在此检查——
+  `make dev` 的 watch 编译与 `cargo check` 争用共享 `work/rust` target 会互相阻塞，
+  Rust 请以 `make lint` / `cargo test` 为准。跳过门禁：`git commit --no-verify`。
+
 ### 权限（重要）
 
 辅助功能权限授给 **responsible process**，不是 ax-explorer 二进制本身：
