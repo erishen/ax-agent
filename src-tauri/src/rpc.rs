@@ -21,12 +21,14 @@
 //! - `ax.screenshot` (pid)
 
 use axum::{
-    extract::Json,
+    extract::{Json, State},
+    http::{header, HeaderMap, StatusCode},
     routing::{get, post},
     Router,
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::net::TcpListener;
 
 use crate::ax_act;
@@ -35,6 +37,55 @@ use crate::commands;
 
 const DEFAULT_PORT: u16 = 8931;
 const MAX_DEPTH: usize = 12;
+
+/// Shared secret for the loopback server. This endpoint can click, type and
+/// screenshot the whole desktop, so any local process (browser hitting the
+/// port, malware, misbehaving scripts) must be locked out. The token lives in
+/// a 0600 file (or `AX_RPC_TOKEN`, which wins), is generated once on first
+/// launch, and is shared with CLI clients through the file contract.
+fn rpc_token() -> String {
+    if let Ok(t) = std::env::var("AX_RPC_TOKEN") {
+        let t = t.trim().to_string();
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    let path = std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".ax-explorer/rpc.token"));
+    let Some(path) = path else {
+        return String::new(); // no HOME → tokenless loopback (fallback)
+    };
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() {
+            return existing;
+        }
+    }
+    // 32 random bytes straight from the OS CSPRNG (no new crate needed).
+    let mut raw = [0u8; 32];
+    let mut fresh = String::new();
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read;
+        if f.read_exact(&mut raw).is_ok() {
+            fresh = raw.iter().map(|b| format!("{b:02x}")).collect();
+        }
+    }
+    if fresh.is_empty() {
+        eprintln!("[rpc] 无法生成鉴权 token（/dev/urandom 不可用）");
+        return String::new(); // degraded: no auth on loopback
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, &fresh);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    fresh
+}
 
 /// Start the loopback JSON-RPC server on a background thread with its own
 /// tokio runtime (Tauri's `.setup` runs on the main thread and has no reactor,
@@ -64,15 +115,17 @@ pub fn spawn() {
 }
 
 async fn serve(port: u16) {
+    let token = rpc_token();
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
-        .route("/rpc", post(handle_rpc));
+        .route("/rpc", post(handle_rpc))
+        .with_state(token);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(listener) = TcpListener::bind(addr).await else {
         eprintln!("[rpc] 127.0.0.1:{port} 端口被占用，JSON-RPC 未启动");
         return;
     };
-    eprintln!("[rpc] JSON-RPC 已就绪: http://127.0.0.1:{port}/rpc");
+    eprintln!("[rpc] JSON-RPC 已就绪: http://127.0.0.1:{port}/rpc（需 Bearer token）");
     let _ = axum::serve(listener, app).await;
 }
 
@@ -460,7 +513,29 @@ fn base64_encode(data: &[u8]) -> String {
 // HTTP
 // ---------------------------------------------------------------------------
 
-async fn handle_rpc(Json(req): Json<Value>) -> Json<Value> {
+async fn handle_rpc(
+    State(token): State<String>,
+    headers: HeaderMap,
+    Json(req): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    // Lock out every unauthenticated local caller (browsers, other processes).
+    // `/health` intentionally stays open; everything else needs the token.
+    let provided = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let authorized = provided
+        .strip_prefix("Bearer ")
+        .is_some_and(|t| t.trim() == token);
+    if !authorized {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "jsonrpc": "2.0", "id": Value::Null,
+                "error": { "code": -32000, "message": "未授权：缺少或错误的 Bearer token（设置 AX_RPC_TOKEN 或 ~/.ax-explorer/rpc.token）" }
+            })),
+        );
+    }
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let method = req
         .get("method")
@@ -469,9 +544,15 @@ async fn handle_rpc(Json(req): Json<Value>) -> Json<Value> {
         .to_string();
     let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
     match dispatch(&method, &params).await {
-        Ok(result) => Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })),
-        Err((code, message)) => Json(json!({
-            "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message }
-        })),
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })),
+        ),
+        Err((code, message)) => (
+            StatusCode::OK,
+            Json(json!({
+                "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message }
+            })),
+        ),
     }
 }

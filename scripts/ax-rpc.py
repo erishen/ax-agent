@@ -38,14 +38,32 @@ import sys
 import urllib.request
 
 ENDPOINT = os.environ.get("AX_RPC_URL", "http://127.0.0.1:8931/rpc")
+TOKEN_FILE = os.path.expanduser("~/.ax-explorer/rpc.token")
 _counter = 0
+
+
+def _token():
+    """Bearer token for the loopback server (AX_RPC_TOKEN wins; else file)."""
+    t = os.environ.get("AX_RPC_TOKEN")
+    if t:
+        return t
+    try:
+        with open(TOKEN_FILE) as f:
+            t = f.read().strip()
+        return t or None
+    except OSError:
+        return None
 
 
 def rpc(method, params=None):
     global _counter
     _counter += 1
     body = json.dumps({"jsonrpc": "2.0", "id": _counter, "method": method, "params": params or {}})
-    req = urllib.request.Request(ENDPOINT, data=body.encode(), headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    tok = _token()
+    if tok:
+        headers["Authorization"] = f"Bearer {tok}"
+    req = urllib.request.Request(ENDPOINT, data=body.encode(), headers=headers)
     with urllib.request.urlopen(req, timeout=60) as resp:
         out = json.load(resp)
     if "error" in out:
