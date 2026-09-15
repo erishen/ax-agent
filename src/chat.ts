@@ -836,15 +836,18 @@ async function runTool(
         // Quality hint: many low-confidence / garbled words usually mean the
         // page is mid-transition (loading, animation, overlay) — telling the
         // model to re-scan after a beat instead of trusting the noise.
-        const cjk = (s: string) => (s.match(/[\u4e00-\u9fa5]/g) || []).length;
         const lowConf = words.filter((w) => w.confidence < 0.5).length;
-        const garble = words.filter(
-          (w) => w.confidence < 0.5 && cjk(w.text) / Math.max(w.text.length, 1) < 0.3,
-        ).length;
         const qualityNote =
-          words.length > 3 && (lowConf / words.length > 0.6 || garble >= 3)
+          words.length > 3 && (lowConf / words.length > 0.5 || lowConf >= 10)
             ? "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面。"
             : "";
+        // Detail-page play guidance: self-drawn players (Tencent Video etc.)
+        // render the play control as an unlabeled image button the OCR can't
+        // name — tell the model where to look / how to fall back to keyboard.
+        const inDetail = !playing && /简介|评分|立即播放|播放第|第\d+集/.test(joined);
+        const playHint = inDetail
+          ? "\n（详情页播放按钮多为无文字的绿色大按钮，位于片名/简介行的下方或右侧；OCR 识别不到按钮文字时，可先按空格键尝试播放，或对按钮区域再 ocr 一次）"
+          : "";
         return {
           result:
             `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}` +
@@ -852,6 +855,7 @@ async function runTool(
             (playing
               ? "\n（检测到「播放中」标记：视频已在播放，按规则立即 done 汇报，不要再点击）"
               : "") +
+            playHint +
             qualityNote,
           state,
         };
