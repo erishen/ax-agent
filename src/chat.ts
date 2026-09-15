@@ -609,6 +609,10 @@ let lastOcrList = false;
  *  neighbouring poster — 14:05 session: opened sub-9 坚如磐石); detail-page
  *  clicks (选集/立即播放) must stay free. */
 let lastOcrDetail = false;
+/** Whether the most recent ocr showed a playing player (播放中/time codes).
+ *  Home-page clicks near nothing rated are soft-flagged, but player-page
+ *  clicks (pause/controls) must stay free. */
+let lastOcrPlayer = false;
 
 /**
  * Set when a click lands in the top filter/sort band of a rating-less
@@ -760,6 +764,7 @@ async function runTool(
         scrollsSinceRating = 0;
         lastOcrList = false;
         lastOcrDetail = false;
+        lastOcrPlayer = false;
         pendingSortVerify = false;
         miniPlayingTitle = "";
         // First moment the drive target's pid is known: park our window on a
@@ -1028,6 +1033,7 @@ async function runTool(
         //     even though the model clicked nothing. Treating that as task
         //     evidence would finish on the wrong video.
         const playing = /播放中|正在播放|播放[片日F！]|放中/.test(joined);
+        lastOcrPlayer = playing;
         const playerEvidence = /简介|评分|播放第|选集|倍速|杜比|语言|\d{1,2}:\d{2}/.test(joined);
         // Try to name the banner: the title word on the same row, within a
         // moderate distance right/left of the 播放中 marker.
@@ -1221,6 +1227,16 @@ async function runTool(
                 ? `\n（已连续 ${scrollsSinceRating} 次列表页未见评分数字：当前多半是「最热/最新」排序，卡片不显示评分徽标，继续滚动也读不到分。改切「高分好评」排序（ocr 顶部筛选栏该标签坐标），或直接点开候选片详情页用详情页评分筛选；不要继续在同一列表里盲目滚动）`
                 : "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
           : "";
+        // Home/navigation page with no rating candidates at all: the model
+        // tends to click whatever card catches its eye (你正在追 / hot-list
+        // / recommendations). Tencent cards PLAY directly on click, so that
+        // is how the 16:33 session opened 心动的信号9 before ever entering
+        // the film channel. Steer it to the 电影 channel instead.
+        const homePage =
+          !rating && !detailPage && !listPage && !playing && /你正在追/.test(joined);
+        const homeHint = homePage
+          ? "\n（当前页面没有评分候选配对（非评分列表/非详情页）：这是首页或导航页。首页的「你正在追」/热搜/推荐卡片【点卡会直接播放】你之前看过或无关的内容（16:33 会话先点开了《心动的信号9》）。任务应先进「电影」频道：点左侧导航「电影」（x≈200, y≈370），进入后滚动读取各片评分挑 ≥9 候选，再点片名坐标进详情页复核——不要在首页点卡片）"
+          : "";
         return {
           result:
             `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}` +
@@ -1233,6 +1249,7 @@ async function runTool(
             seenDetailHint +
             heroHint +
             listHint +
+            homeHint +
             seenHint +
             qualityNote,
           state,
@@ -1619,6 +1636,13 @@ async function runTool(
           pendingSortVerify = true;
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
+        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) > 280 && Math.round(x) >= 300) {
+          // No rating pairs and not a rated list / detail / player: this is
+          // the home or a navigation page. Tencent cards PLAY on click, so
+          // a stray tap here starts unrelated content (16:33 session opened
+          // 心动的信号9 before ever entering the film channel). Soft-flag.
+          pairNote =
+            "\n⚠️ 当前屏幕没有评分候选配对（首页/导航页）：腾讯视频首页的「你正在追」/热搜/推荐卡片点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。先点左侧导航「电影」（x≈200, y≈370）进入评分列表，再按配对坐标点片名；不要在首页点卡片。";
         }
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
@@ -1661,6 +1685,9 @@ async function runTool(
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
           pendingSortVerify = true;
+        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) > 280 && Math.round(x) >= 300) {
+          pairNote =
+            "\n⚠️ 当前屏幕没有评分候选配对（首页/导航页）：腾讯视频首页的「你正在追」/热搜/推荐卡片点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。先点左侧导航「电影」（x≈200, y≈370）进入评分列表，再按配对坐标点片名；不要在首页点卡片。";
         }
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
