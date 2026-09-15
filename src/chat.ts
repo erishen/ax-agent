@@ -48,6 +48,7 @@ import {
 } from "./api";
 import type { AxAppInfo, OcrScreenWord } from "./types";
 import { TencentUiState } from "./tencent-ui";
+import { NeteaseUiState } from "./netease-ui";
 import {
   CONTINUE_NUDGE,
   MAX_AGENT_STEPS,
@@ -449,6 +450,17 @@ import { desktopToolExec, mcpLocalCall } from "./api";
 
 
 const tui = new TencentUiState();
+const nui = new NeteaseUiState();
+
+/** Which per-app UI decision state a target app uses. NetEase and Tencent
+ * are both self-drawn (AX empty) but have different page models; every
+ * other app gets no UI hints (the generic ocr/click loop). */
+function uiKind(appName: string | null): "tencent" | "netease" | null {
+  if (!appName) return null;
+  if (/网易云音乐|netease|163music/i.test(appName)) return "netease";
+  if (/腾讯视频|tencent/i.test(appName)) return "tencent";
+  return null;
+}
 
 /**
  * Clamp a screen point into the session target's main window frame, so
@@ -532,7 +544,8 @@ async function runTool(
           /* outline is best-effort */
         }
         state = { ...state, pid: app.pid, appName: app.name, outline };
-        tui.resetForOpenApp();
+        if (uiKind(app.name) === "netease") nui.resetForOpenApp();
+        else tui.resetForOpenApp();
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -705,7 +718,11 @@ async function runTool(
         // pairing, mini-player detection, all 11 hints, state updates) lives
         // in TencentUiState.processOcr — regression-tested in
         // tests/tencent-ui.test.mjs with the real session word-lists.
-        const { joined, hints } = tui.processOcr(words);
+        // NetEase CloudMusic routes through NeteaseUiState.processOcr (song
+        // pairing + bottom-bar playback evidence) instead.
+        const ui = uiKind(name);
+        const { joined, hints } =
+          ui === "netease" ? nui.processOcr(words) : tui.processOcr(words);
         return {
           result: `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}${hints}`,
           state,
@@ -942,7 +959,8 @@ async function runTool(
           };
         }
         await scrollAt(x, y, lines, state.pid ?? undefined);
-        const { qualifiedNote } = tui.scrollAwayNote();
+        const netease = uiKind(state.appName) === "netease";
+        const qualifiedNote = netease ? nui.scrollAwayNote() : tui.scrollAwayNote();
         return {
           result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。${qualifiedNote}${tui.sortVerifyReminder()}`,
           state,
@@ -998,11 +1016,15 @@ async function runTool(
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
-        const guard = tui.clickGuard(Math.round(x), Math.round(y), "单击");
+        const netease = uiKind(state.appName) === "netease";
+        const guard = netease
+          ? nui.clickGuard(Math.round(x), Math.round(y), "单击")
+          : tui.clickGuard(Math.round(x), Math.round(y), "单击");
         if (guard.blocked) return { result: guard.blocked, state };
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
         await clickAt(x, y, state.pid ?? undefined);
+        if (netease) nui.noteSongClick(Math.round(x), Math.round(y));
         state = await refreshOutline(state);
         return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
@@ -1010,9 +1032,13 @@ async function runTool(
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
-        const guard = tui.clickGuard(Math.round(x), Math.round(y), "双击");
+        const netease = uiKind(state.appName) === "netease";
+        const guard = netease
+          ? nui.clickGuard(Math.round(x), Math.round(y), "双击")
+          : tui.clickGuard(Math.round(x), Math.round(y), "双击");
         if (guard.blocked) return { result: guard.blocked, state };
         await doubleClickAt(x, y, state.pid ?? undefined);
+        if (netease) nui.noteSongClick(Math.round(x), Math.round(y));
         state = await refreshOutline(state);
         return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}`, state };
       }
