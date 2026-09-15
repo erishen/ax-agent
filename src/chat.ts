@@ -870,7 +870,7 @@ async function runTool(
         // poster (nearest plausible Chinese text), so the model clicks the
         // TITLE's coordinates — clicking near the rating badge lands on the
         // neighbouring poster (the 8.7-film-instead-of-9.1 bug).
-        const NAV = /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
+        const NAV = /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
         const RATING = /^(\d\.\d)(分)?$/;
         const rating = words.find(
           (w) => RATING.test(w.text) && w.confidence >= 0.5,
@@ -988,6 +988,17 @@ async function runTool(
           detailPage && rating && !Number.isNaN(ratingNum) && ratingNum < 9
             ? `\n（当前详情页评分 ${rating.text.replace("分", "")} 分 < 9，【不达标】：不要点播放/立即播放。按 esc 返回列表（返回后 ocr 确认回到列表），重新挑选评分 ≥9 的候选片；本页的推荐/选集/播放列表都是这个低分片的周边内容，不要继续操作）`
             : "";
+        // Channel home / list hero cards also show rating + 立即播放, but
+        // they are NOT a detail page and the hero card auto-rotates — the
+        // button belongs to whichever card is shown at click time (13:28
+        // session: clicked 出入平安 9.3's button, the card rotated and a
+        // different film opened). Warn neutrally when a rated 立即播放 has
+        // no detail-page markers around it.
+        const heroCard =
+          playBtn !== undefined && !detailPage && /\d\.\d分/.test(joined);
+        const heroHint = heroCard
+          ? "\n（注意：带评分的「立即播放」旁没有详情页特征（简介/选集/播放列表）——当前是频道首页/列表大卡片而非详情页。首页大卡片会自动轮播，点「立即播放」前先确认当前展示卡片的片名与评分确实对应，评分达标再点，否则可能打开轮播到的别的片）"
+          : "";
         // 「播放中」position decides what it means. In the top strip
         // (y<140, Tencent's mini-player / resume banner) it is the app
         // auto-resuming a previously closed video — NOT evidence the task
@@ -997,7 +1008,15 @@ async function runTool(
         // so any 第N话/集 marker at y<140 flags the mini-player too, even
         // without a readable 「播放中」.
         const topEpi = words.find((w) => w.y < 140 && /第\d+[话集]/.test(w.text));
-        const miniPlayer = topEpi !== undefined || (pw !== undefined && pw.y < 140);
+        // The strip's play glyph OCRs as II/I1/口 followed by the film title
+        // with no readable state word at all (13:28 session: 「II •E让眼泪
+        // 变珍王」= a resumed 心动的信号). Any such marker at y<140 is the
+        // mini-player, even without 播放中 or 第N话.
+        const topPlayer = words.find(
+          (w) => w.y < 140 && /^(II|I1|口)[^，。]{2,}/.test(w.text),
+        );
+        const miniPlayer =
+          topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < 140);
         const miniHint = `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成）`;
         const playingHint = miniPlayer
           ? miniHint
@@ -1037,6 +1056,7 @@ async function runTool(
             dialogHint +
             watchedHint +
             ratingGuard +
+            heroHint +
             listHint +
             qualityNote,
           state,
