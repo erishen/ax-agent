@@ -557,6 +557,15 @@ const recentMoves: RecentMove[] = [];
 let elementAtFails = 0;
 
 /**
+ * Title↔rating pairs from the most recent OCR on a list/channel page, with
+ * the title's center coordinates. Filled by the ocr handler, consumed by
+ * click_at: clicking the rating badge or poster edge lands on the
+ * neighbouring film (the 8.7-instead-of-9.1 bug), so a click that misses
+ * every paired title gets a corrective hint before it fires.
+ */
+let lastListPairs: Array<{ title: string; score: string; x: number; y: number }> = [];
+
+/**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
  * desktop when the model guesses out-of-window coordinates. Returns the
@@ -651,6 +660,7 @@ async function runTool(
         }
         state = { ...state, pid: app.pid, appName: app.name, outline };
         elementAtFails = 0; // new target app → re-arm element_at probes
+        lastListPairs = []; // stale rating pairs from the previous app
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -851,6 +861,7 @@ async function runTool(
           (w) => RATING.test(w.text) && w.confidence >= 0.5,
         );
         let pairs: string[] = [];
+        lastListPairs = [];
         if (rating) {
           const cx = (w: OcrScreenWord) => w.x + w.w / 2;
           for (const r of words) {
@@ -868,9 +879,11 @@ async function runTool(
               .map((t) => ({ t, d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y) }))
               .sort((a, b) => a.d - b.d)[0];
             if (title && title.d < 150) {
-              pairs.push(
-                `「${title.t.text.trim()}」评分 ${r.text.replace("分", "")} 分 → 点片名坐标 (${Math.round(title.t.x + title.t.w / 2)}, ${Math.round(title.t.y + title.t.h / 2)})`,
-              );
+              const score = r.text.replace("分", "");
+              const tx = Math.round(title.t.x + title.t.w / 2);
+              const ty = Math.round(title.t.y + title.t.h / 2);
+              lastListPairs.push({ title: title.t.text.trim(), score, x: tx, y: ty });
+              pairs.push(`「${title.t.text.trim()}」评分 ${score} 分 → 点片名坐标 (${tx}, ${ty})`);
             }
           }
           pairs = [...new Set(pairs)].slice(0, 6);
@@ -1014,6 +1027,7 @@ async function runTool(
         return { result: `焦点已给到「${target.label}」`, state };
       }
       case "move_window": {
+        try {
         if (state.pid === null) return { result: "尚未选择应用", state };
         const win = state.outline.find((n) => n.role === "AXWindow");
         let x = Number(args.x);
@@ -1105,6 +1119,18 @@ async function runTool(
             resetWarn,
           state,
         };
+        } catch (e) {
+          const msg = String(e);
+          const maxi = str("position") === "maximize";
+          return {
+            result:
+              `move_window 失败: ${msg}` +
+              (maxi
+                ? "\n窗口可能未最大化——自绘 UI 应用常不支持 AXPosition/AXSize 设置（如报错 -25200 system failure 时窗口原样未动）。不要假设最大化已生效：继续操作前先 ocr 复核当前元素坐标；若窗口尺寸够用就按现布局推进，或换 resize_window 显式调整。"
+                : "\n窗口可能未移动/未缩放。先 ocr 复核当前布局再继续，旧坐标若失效则重新读取。"),
+            state,
+          };
+        }
       }
       case "resize_window": {
         if (state.pid === null) return { result: "尚未选择应用", state };
@@ -1116,17 +1142,31 @@ async function runTool(
         const win = state.outline.find((n) => n.role === "AXWindow");
         if (!win) {
           // 自绘 UI / 树里没有窗口节点：pid 级兜底。
-          await resizeWindowByPid(state.pid, w, h);
+          try {
+            await resizeWindowByPid(state.pid, w, h);
+          } catch (e) {
+            return {
+              result: `resize_window 失败: ${String(e)}\n窗口可能未调整——自绘 UI 应用常不支持 AXSize 设置（如 -25200 system failure）。不要假设已缩放：先 ocr 复核当前布局再继续。`,
+              state,
+            };
+          }
           return {
             result: `窗口已调整为 ${w}x${h}（pid 级）\n布局已变化：先 ocr 复核各元素当前位置再操作（旧坐标已失效）。`,
             state,
           };
         }
         const prev = await readAttribute(state.pid, win.path, "AXSize").catch(() => null);
-        await resizeWindow(state.pid, win.path, w, h, {
-          role: win.role,
-          label: win.label,
-        });
+        try {
+          await resizeWindow(state.pid, win.path, w, h, {
+            role: win.role,
+            label: win.label,
+          });
+        } catch (e) {
+          return {
+            result: `resize_window 失败: ${String(e)}\n窗口可能未调整。先 ocr 复核当前布局再继续，不要假设已缩放。`,
+            state,
+          };
+        }
         state = prev && prev.includes("w:")
           ? { ...state, undo: { kind: "set_size", pid: state.pid, path: win.path, prev, label: "窗口" } }
           : state;
@@ -1259,6 +1299,27 @@ async function runTool(
           return { result: "需要数字坐标 x, y", state };
         }
         const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
+        // Rating-task guard: when the last OCR carried title↔rating pairs,
+        // a click that misses every paired title is likely aimed at a rating
+        // badge or poster edge — which opens the neighbouring film (the
+        // 8.7-instead-of-9.1 bug). Hint at the closest candidate instead of
+        // clicking blindly. Far-away clicks (nav rail, top bar) are left alone.
+        let pairNote = "";
+        if (lastListPairs.length) {
+          const px = Math.round(x);
+          const py = Math.round(y);
+          const onTitle = lastListPairs.find(
+            (p) => Math.abs(px - p.x) <= 60 && Math.abs(py - p.y) <= 40,
+          );
+          const nearest = lastListPairs
+            .map((p) => ({ p, d: Math.hypot(px - p.x, py - p.y) }))
+            .sort((a, b) => a.d - b.d)[0];
+          if (onTitle) {
+            pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
+          } else if (nearest && nearest.d < 180) {
+            pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
+          }
+        }
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
         await clickAt(x, y, state.pid ?? undefined);
@@ -1267,7 +1328,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${pairNote}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
       case "double_click_at": {
         const rawX = Number(args.x);
@@ -1276,13 +1337,29 @@ async function runTool(
           return { result: "需要数字坐标 x, y", state };
         }
         const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
+        let pairNote = "";
+        if (lastListPairs.length) {
+          const px = Math.round(x);
+          const py = Math.round(y);
+          const onTitle = lastListPairs.find(
+            (p) => Math.abs(px - p.x) <= 60 && Math.abs(py - p.y) <= 40,
+          );
+          const nearest = lastListPairs
+            .map((p) => ({ p, d: Math.hypot(px - p.x, py - p.y) }))
+            .sort((a, b) => a.d - b.d)[0];
+          if (onTitle) {
+            pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
+          } else if (nearest && nearest.d < 180) {
+            pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
+          }
+        }
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
           if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 10) };
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${pairNote}`, state };
       }
       case "drag": {
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
