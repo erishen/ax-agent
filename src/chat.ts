@@ -977,6 +977,17 @@ async function runTool(
         const watchedHint = watchedPage
           ? "\n（检测到「你正在追/历史观看」页（观看至N%/已看完标签）：这些是你追过的剧，评分不代表高分新片池，点击卡片会【直接续播】而不会打开详情页。任务要挑高分电影：回到「电影」频道列表页并切「高分好评」排序（或点开候选片详情页复核），不要在本页点卡片播放）"
           : "";
+        // Detail-page rating guard: a detail page carries 简介/选集/播放列表
+        // markers that never appear on list/home pages. If its rating is
+        // below the 9.0 bar, say so loudly — the agent otherwise keeps
+        // fiddling with a film it must not play (13:22 session: opened the
+        // wrong 8.1 detail after a stale-coordinate click and never noticed).
+        const detailPage = /简介[＞>]|选集|播放列表/.test(joined);
+        const ratingNum = rating ? parseFloat(rating.text) : NaN;
+        const ratingGuard =
+          detailPage && rating && !Number.isNaN(ratingNum) && ratingNum < 9
+            ? `\n（当前详情页评分 ${rating.text.replace("分", "")} 分 < 9，【不达标】：不要点播放/立即播放。按 esc 返回列表（返回后 ocr 确认回到列表），重新挑选评分 ≥9 的候选片；本页的推荐/选集/播放列表都是这个低分片的周边内容，不要继续操作）`
+            : "";
         // 「播放中」position decides what it means. In the top strip
         // (y<140, Tencent's mini-player / resume banner) it is the app
         // auto-resuming a previously closed video — NOT evidence the task
@@ -1025,6 +1036,7 @@ async function runTool(
             playHint +
             dialogHint +
             watchedHint +
+            ratingGuard +
             listHint +
             qualityNote,
           state,
@@ -1290,8 +1302,13 @@ async function runTool(
           };
         }
         await scrollAt(x, y, lines, state.pid ?? undefined);
+        // 滚动后屏幕内容已移动：任何来自上次 ocr 的评分-片名配对坐标都已
+        // 失效。不清空的话 click_at 会用旧坐标提示「将打开 X」而实际点到
+        // 滚动后的别的卡片（13:22 会话：滚动后未 ocr 即点狄仁杰坐标，
+        // 结果打开的是 8.1 分的定海神针详情页）。
+        lastListPairs = [];
         return {
-          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}如需查看新内容请 read_screen 或 find。`,
+          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。`,
           state,
         };
       }
