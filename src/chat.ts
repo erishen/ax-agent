@@ -111,6 +111,28 @@ export function newSession(): SessionState {
   return { messages: [], pid: null, appName: null, outline: [] };
 }
 
+/**
+ * Plain-text transcript messages carry the raw Markdown the LLM wrote
+ * (**bold**, # headings, `code`, *em*). Inside the app react-markdown
+ * renders it, but the copied/pasted transcript and the session log show
+ * the literal syntax — that is what "Markdown 展示还不好" referred to.
+ * Downgrade the visible markers (keep list dashes and numbering, they
+ * read fine in plain text). Tool-step cards (STEP_RE) are skipped.
+ */
+/** Matches a tool-step bubble: `🤖 3/25 \`ocr\` …` + fenced code block. */
+const STEP_RE = /^(🤖[^\n]*)\n+```\n?([\s\S]*?)```$/;
+export function stripMarkdownSyntax(s: string): string {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*\*/g, "")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/``/g, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/[ \t]+\n/g, "\n");
+}
+
 /** Render the whole session as plain text — for the 📋 copy button and the log. */
 export function sessionTranscript(s: SessionState): string {
   const lines: string[] = [];
@@ -122,7 +144,11 @@ export function sessionTranscript(s: SessionState): string {
   lines.push("");
   for (const m of s.messages) {
     lines.push(`### ${m.role === "user" ? "🧑 用户" : "🤖 助手"}`);
-    lines.push(m.text);
+    // Tool-step cards keep their fenced code block verbatim; prose
+    // messages lose the Markdown markers that would render as literal
+    // syntax in a pasted transcript.
+    const text = m.role === "assistant" && !STEP_RE.test(m.text) ? stripMarkdownSyntax(m.text) : m.text;
+    lines.push(text);
     lines.push("");
   }
   return lines.join("\n");
@@ -577,6 +603,12 @@ let scrollsSinceRating = 0;
  * no rating digits). Gates the sort-tab click hint so the home page top
  * area does not get flagged as a filter bar. */
 let lastOcrList = false;
+/** Whether the most recent ocr saw a detail page (简介/选集/播放列表).
+ *  List-page clicks near a rating candidate are intercepted (a Tencent card
+ *  click PLAYS the film directly, and clicking near the badge opens the
+ *  neighbouring poster — 14:05 session: opened sub-9 坚如磐石); detail-page
+ *  clicks (选集/立即播放) must stay free. */
+let lastOcrDetail = false;
 
 /**
  * Set when a click lands in the top filter/sort band of a rating-less
@@ -727,6 +759,7 @@ async function runTool(
         lastListPairs = []; // stale rating pairs from the previous app
         scrollsSinceRating = 0;
         lastOcrList = false;
+        lastOcrDetail = false;
         pendingSortVerify = false;
         miniPlayingTitle = "";
         // First moment the drive target's pid is known: park our window on a
@@ -951,7 +984,16 @@ async function runTool(
                   t.confidence >= 0.5 &&
                   t.text.length >= 2 &&
                   /^[\u4e00-\u9fa5《》·\s0-9A-Za-z]+$/.test(t.text) &&
-                  !NAV.test(t.text) && !/月\d+日|定档|上映|巨制|打爆/.test(t.text),
+                  !NAV.test(t.text) && !/月\d+日|定档|上映|巨制|打爆/.test(t.text) &&
+                  // Actor/genre rows read as "雷佳音 张国立 警匪打黑" —
+                  // space-separated multi-word lines are cast + genre, not a
+                  // film title (14:05 session: it was paired with a 9.4
+                  // rating that belonged to the neighbouring film, so the
+                  // model believed 坚如磐石 was 9.4 and opened a sub-9 film).
+                  !/\s/.test(t.text) &&
+                  // Episode/series labels (第二部/第3集) are episode chips,
+                  // not titles (14:05 session: 「第二部」 scored 9.4).
+                  !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text),
               )
               .map((t) => ({ t, d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y) }))
               .sort((a, b) => a.d - b.d)[0];
@@ -1051,6 +1093,7 @@ async function runTool(
         // fiddling with a film it must not play (13:22 session: opened the
         // wrong 8.1 detail after a stale-coordinate click and never noticed).
         const detailPage = /简介[＞>]|选集|播放列表/.test(joined);
+        lastOcrDetail = detailPage;
         const ratingNum = rating ? parseFloat(rating.text) : NaN;
         const ratingGuard =
           detailPage && rating && !Number.isNaN(ratingNum) && ratingNum < 9
@@ -1559,6 +1602,12 @@ async function runTool(
             pairNote = `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`;
           } else if (onTitle) {
             pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
+          } else if (nearest && nearest.d < 180 && !lastOcrDetail && py > 280) {
+            // List page, click missed every paired title: a Tencent card
+            // click PLAYS the film directly, so the nearby poster (rating
+            // badge edge / actor row) would open a wrong or sub-9 film
+            // (14:05 session: 坚如磐石 was played this way). Refuse to fire.
+            return { result: `⛔ 点击 (${px}, ${py}) 被守卫拦截：它没落在任何评分候选的片名上（最近候选「${nearest.p.title}」评分 ${nearest.p.score} @(${nearest.p.x}, ${nearest.p.y})）。腾讯视频点卡片会直接开始播放，评分徽标/海报边缘/演员行会打开错误的片。先 ocr 刷新列表，确认目标片的片名与评分都在配对清单里，再点它的片名坐标；要切排序/筛选请点顶部标签（y≤280）。`, state };
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
@@ -1603,6 +1652,8 @@ async function runTool(
             pairNote = `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`;
           } else if (onTitle) {
             pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
+          } else if (nearest && nearest.d < 180 && !lastOcrDetail && py > 280) {
+            return { result: `⛔ 双击 (${px}, ${py}) 被守卫拦截：它没落在任何评分候选的片名上（最近候选「${nearest.p.title}」评分 ${nearest.p.score} @(${nearest.p.x}, ${nearest.p.y})）。腾讯视频点卡片会直接开始播放，评分徽标/海报边缘/演员行会打开错误的片。先 ocr 刷新列表，确认目标片的片名与评分都在配对清单里，再点它的片名坐标；要切排序/筛选请点顶部标签（y≤280）。`, state };
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
