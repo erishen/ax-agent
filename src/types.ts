@@ -120,3 +120,12 @@ export interface LocalAppsConfig {
   /** Cap on how many installed apps feed the template matrix. */
   max_apps: number | null;
 }
+
+/** An outline node: what we keep so keywords can address real elements. */
+export interface OutlineNode {
+  path: number[];
+  role: string;
+  label: string;
+  value: string;
+  actions: string[];
+}

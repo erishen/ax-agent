@@ -145,3 +145,80 @@ test("NAV_WORDS covers the words the model waits on", () => {
     assert.ok(NAV_WORDS.includes(w), w);
   }
 });
+
+// --- parseCommand: the offline instruction parser (formerly an inline regex
+// chain in handleUtterance with zero coverage). Order of checks matters:
+// help/continue first, then open → apps → read → refresh → probe → move →
+// type → click → focus → find.
+
+import { parseCommand } from "../src/tool-utils.ts";
+
+test("parseCommand: help forms", () => {
+  for (const t of ["帮助", "help", "能做什么", "指令？", " 帮助 "]) {
+    assert.deepEqual(parseCommand(t), { kind: "help" }, t);
+  }
+});
+
+test("parseCommand: continue forms", () => {
+  for (const t of ["继续", "接着做", "continue", "resume？"]) {
+    assert.deepEqual(parseCommand(t), { kind: "continue" }, t);
+  }
+});
+
+test("parseCommand: open carries the target", () => {
+  assert.deepEqual(parseCommand("打开腾讯视频"), { kind: "open", target: "腾讯视频" });
+  assert.deepEqual(parseCommand("open TextEdit"), { kind: "open", target: "TextEdit" });
+  assert.deepEqual(parseCommand("启动 备忘录"), { kind: "open", target: "备忘录" });
+});
+
+test("parseCommand: apps forms", () => {
+  for (const t of ["应用列表", "应用", "apps", "list apps"]) {
+    assert.deepEqual(parseCommand(t), { kind: "apps" }, t);
+  }
+});
+
+test("parseCommand: read carries optional app; refresh after read", () => {
+  assert.deepEqual(parseCommand("读一下"), { kind: "read", app: "" });
+  assert.deepEqual(parseCommand("读 Safari"), { kind: "read", app: "Safari" });
+  assert.deepEqual(parseCommand("读取 腾讯视频"), { kind: "read", app: "腾讯视频" });
+  assert.deepEqual(parseCommand("刷新"), { kind: "refresh" });
+  assert.deepEqual(parseCommand("重新读取"), { kind: "refresh" });
+});
+
+test("parseCommand: probe / move parse ints and decimals", () => {
+  assert.deepEqual(parseCommand("点选 600 400"), { kind: "probe", x: 600, y: 400 });
+  assert.deepEqual(parseCommand("点 123.5 45"), { kind: "probe", x: 123.5, y: 45 });
+  assert.deepEqual(parseCommand("移动窗口 100 200"), { kind: "move", x: 100, y: 200 });
+  assert.deepEqual(parseCommand("move 10 20"), { kind: "move", x: 10, y: 20 });
+  // single/bad coordinates match no command at all (probe needs two)
+  assert.equal(parseCommand("点 abc def"), null);
+  assert.equal(parseCommand("点 600"), null);
+});
+
+test("parseCommand: type keeps the whole text", () => {
+  assert.deepEqual(parseCommand("输入 你好 @搜索"), { kind: "type", text: "你好 @搜索" });
+  assert.deepEqual(parseCommand("type hello world"), { kind: "type", text: "hello world" });
+});
+
+test("parseCommand: click / focus / find carry keywords", () => {
+  assert.deepEqual(parseCommand("点击 显示字体"), { kind: "click", keyword: "显示字体" });
+  assert.deepEqual(parseCommand("按下 确定"), { kind: "click", keyword: "确定" });
+  assert.deepEqual(parseCommand("聚焦 搜索"), { kind: "focus", keyword: "搜索" });
+  assert.deepEqual(parseCommand("找 设置"), { kind: "find", keyword: "设置" });
+  assert.deepEqual(parseCommand("查找 导出 保存"), { kind: "find", keyword: "导出 保存" });
+});
+
+test("parseCommand: natural language without a command prefix → null", () => {
+  assert.equal(parseCommand("帮我在备忘录记一下明天买牛奶"), null);
+  assert.equal(parseCommand("把 WeChat 和备忘录左右分屏"), null);
+  assert.equal(parseCommand(""), null);
+  // "打开" without a space now opens the rest as target (no-space Chinese)
+  assert.deepEqual(parseCommand("打开腾讯视频"), { kind: "open", target: "腾讯视频" });
+});
+
+test("parseCommand: read does not swallow refresh (checked after read)", () => {
+  // "刷新" must hit refresh, not read(""), because read comes first in chain
+  assert.deepEqual(parseCommand("刷新"), { kind: "refresh" });
+  // but a bare "读" with nothing after still means read
+  assert.deepEqual(parseCommand("读"), { kind: "read", app: "" });
+});

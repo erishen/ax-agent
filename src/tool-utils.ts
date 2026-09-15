@@ -103,3 +103,59 @@ export function garbledOcrNote(
     "建议：wait_for 1-2s 后重扫；若持续乱码，尝试 move_window maximize 或确认目标应用在前台。"
   );
 }
+
+/**
+ * Parsed offline command from a user utterance. The fixed parser is only a
+ * fallback when no LLM is configured; every pattern here mirrors the old
+ * inline regex chain in handleUtterance (order matters — read after open,
+ * refresh after read, etc.).
+ */
+export type ParsedCommand =
+  | { kind: "help" }
+  | { kind: "continue" }
+  | { kind: "open"; target: string }
+  | { kind: "apps" }
+  | { kind: "read"; app: string }
+  | { kind: "refresh" }
+  | { kind: "probe"; x: number; y: number }
+  | { kind: "move"; x: number; y: number }
+  | { kind: "type"; text: string }
+  | { kind: "click"; keyword: string }
+  | { kind: "focus"; keyword: string }
+  | { kind: "find"; keyword: string };
+
+/** Parse a raw user line into the offline command it maps to, or null. */
+export function parseCommand(input: string): ParsedCommand | null {
+  const lower = input.trim().toLowerCase();
+  const num = (s: string | undefined) =>
+    s !== undefined && s !== "" && Number.isFinite(Number(s)) ? Number(s) : null;
+  if (/^(帮助|help|用法|能做什么|指令)[?？]?$/i.test(lower)) return { kind: "help" };
+  if (/^(继续|接着做|接着来|continue|go on|resume)[?？]?$/i.test(lower)) return { kind: "continue" };
+  const open = input.match(/^(?:打开|启动|open|launch)\s*(.+)$/i);
+  if (open) return { kind: "open", target: open[1].trim() };
+  if (/^(应用列表|应用|apps|list apps)$/i.test(lower)) return { kind: "apps" };
+  const read = input.match(/^(?:读一下|读取|刷新读|读|read|inspect)\s*(.*)$/i);
+  if (read) return { kind: "read", app: read[1].trim() };
+  if (/^(刷新|refresh|重新读取)$/i.test(lower)) return { kind: "refresh" };
+  const probe = input.match(/^(?:点选|点|probe|hit)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/i);
+  if (probe) {
+    const x = num(probe[1]);
+    const y = num(probe[2]);
+    if (x !== null && y !== null) return { kind: "probe", x, y };
+  }
+  const move = input.match(/^(?:移动窗口|移动|move(?:\s+window)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/i);
+  if (move) {
+    const x = num(move[1]);
+    const y = num(move[2]);
+    if (x !== null && y !== null) return { kind: "move", x, y };
+  }
+  const type = input.match(/^(?:输入|填写|输入文本|type|write)\s*(.+)$/is);
+  if (type) return { kind: "type", text: type[1].trim() };
+  const click = input.match(/^(?:点击|按下|点一下|click|press)\s*(.+)$/i);
+  if (click) return { kind: "click", keyword: click[1].trim() };
+  const focus = input.match(/^(?:聚焦|focus)\s*(.+)$/i);
+  if (focus) return { kind: "focus", keyword: focus[1].trim() };
+  const find = input.match(/^(?:找|搜索|查找|find|search)\s*(.+)$/i);
+  if (find) return { kind: "find", keyword: find[1].trim() };
+  return null;
+}

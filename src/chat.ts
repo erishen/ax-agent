@@ -46,17 +46,24 @@ import {
   typeKeys,
   windowBounds,
 } from "./api";
-import type { AxAppInfo, AxNode, OcrScreenWord } from "./types";
+import type { AxAppInfo, OcrScreenWord } from "./types";
 import { TencentUiState } from "./tencent-ui";
 import {
   CONTINUE_NUDGE,
   MAX_AGENT_STEPS,
-  ROLE_INTERACTIVE,
   STEP_RE,
   SYSTEM_PROMPT,
   dangerousReason,
   environmentLimitNote,
 } from "./agent-config.ts";
+import {
+  findNodes,
+  findNodesAny,
+  flatten,
+  renderOutline,
+  truncate,
+} from "./tree-utils.ts";
+import { parseCommand } from "./tool-utils.ts";
 import {
   NAV_WORDS,
   garbledOcrNote,
@@ -65,6 +72,7 @@ import {
   type ScreenInfo,
 } from "./tool-utils.ts";
 import type { MenuEntry } from "./api";
+import type { OutlineNode } from "./types.ts";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -73,15 +81,6 @@ export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
   text: string;
-}
-
-/** An outline node: what we keep so keywords can address real elements. */
-interface OutlineNode {
-  path: number[];
-  role: string;
-  label: string;
-  value: string;
-  actions: string[];
 }
 
 /** One reversible mutation, remembered so the user can undo it. */
@@ -188,88 +187,6 @@ function reply(state: SessionState, text: string): SessionState {
       { id: nextId++, role: "assistant", text },
     ],
   };
-}
-
-/** Flatten a dumped tree into outline nodes, remembering child-index paths. */
-function flatten(root: AxNode): OutlineNode[] {
-  const out: OutlineNode[] = [];
-  const walk = (node: AxNode, path: number[]) => {
-    const value = node.attributes.find((a) => a.name === "AXValue")?.value ?? "";
-    out.push({
-      path,
-      role: node.role,
-      label: node.label,
-      value,
-      actions: node.actions,
-    });
-    node.children.forEach((child, i) => walk(child, [...path, i]));
-  };
-  walk(root, []);
-  return out;
-}
-
-/**
- * Compact human-readable outline for the model: interactive roles first,
- * StaticText heavily capped (WeChat-class apps have hundreds of text nodes).
- */
-function renderOutline(nodes: OutlineNode[]): string {
-  const interactive = nodes.filter((n) => ROLE_INTERACTIVE.has(n.role));
-  const texts = nodes.filter((n) => n.role === "AXStaticText" && (n.label || n.value));
-  const lines = interactive
-    .slice(0, 45)
-    .map((n) => outlineLine(n));
-  // Only show static text that isn't already represented by a labelled
-  // interactive element, and cap it hard.
-  const seen = new Set(interactive.map((n) => `${n.label}\u0000${n.value}`));
-  lines.push(
-    ...texts
-      .filter((n) => !seen.has(`${n.label}\u0000${n.value}`))
-      .slice(0, 15)
-      .map((n) => outlineLine(n)),
-  );
-  const dropped = interactive.length + texts.length - lines.length;
-  if (dropped > 0) lines.push(`（其余 ${dropped} 个元素省略；用 find <关键词> 精确检索，或 read_screen filter= 只看某类）`);
-  return lines.join("\n");
-}
-
-/** Roles the agent can actually act on or use for orientation. */
-/** One outline line (Markdown-safe: values/actions as inline code). */
-function outlineLine(n: OutlineNode): string {
-  const depth = n.path.length > 1 ? `（层级 ${n.path.length}）` : "";
-  const value = n.value ? ` = \`${truncate(n.value, 40)}\`` : "";
-  const actions = n.actions.length ? ` — \`${n.actions.join(",")}\`` : "";
-  return `- ${n.role.replace("AX", "")}「${truncate(n.label, 36)}」${depth}${value}${actions}`;
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
-}
-
-/** Case-insensitive keyword match over label/role/value. */
-function findNodes(outline: OutlineNode[], keyword: string): OutlineNode[] {
-  const k = keyword.trim().toLowerCase();
-  if (!k) return [];
-  return outline.filter(
-    (n) =>
-      n.label.toLowerCase().includes(k) ||
-      n.role.toLowerCase().includes(k) ||
-      n.value.toLowerCase().includes(k),
-  );
-}
-
-/** OR-match against several keywords (comma/space separated, e.g. read_screen
- *  filter "按钮 输入框" or "导出, 保存"). */
-function findNodesAny(outline: OutlineNode[], keywords: string[]): OutlineNode[] {
-  const ks = keywords.map((k) => k.trim().toLowerCase()).filter(Boolean);
-  if (!ks.length) return [];
-  return outline.filter((n) =>
-    ks.some(
-      (k) =>
-        n.label.toLowerCase().includes(k) ||
-        n.role.toLowerCase().includes(k) ||
-        n.value.toLowerCase().includes(k),
-    ),
-  );
 }
 
 async function treeOf(pid: number, depth: number): Promise<OutlineNode[]> {
@@ -1676,11 +1593,10 @@ export async function handleUtterance(
     messages: [...state.messages, { id: nextId++, role: "user", text: input }],
   };
 
-  const lower = input.toLowerCase();
-  const num = (s: string | undefined) => (s !== undefined && s !== "" && Number.isFinite(Number(s)) ? Number(s) : null);
+  const cmd = parseCommand(input);
 
   // 帮助 always answered locally: cheap and works without a model.
-  if (/^(帮助|help|用法|能做什么|指令)\??$/i.test(lower)) return helpReply(withUser);
+  if (cmd?.kind === "help") return helpReply(withUser);
 
   // Unified mode: the LLM plans and executes everything natural-language;
   // the fixed parser below is only an offline fallback when no model is
@@ -1689,7 +1605,7 @@ export async function handleUtterance(
     const info = await llmConfigured();
     if (info.configured) {
       // 「继续」 resumes the paused run with a fresh step budget.
-      if (/^(继续|接着做|接着来|continue|go on|resume)\??$/i.test(lower)) {
+      if (cmd?.kind === "continue") {
         if (isRunning) return reply(withUser, "⏳ 上一轮还在执行，请等待完成或先「停止」再「继续」。");
         const history = withUser.llmHistory ?? [];
         if (!history.length) {
@@ -1718,63 +1634,37 @@ export async function handleUtterance(
     // Config probe failed (e.g. backend restarting) → parser fallback.
   }
 
-  // 打开 / open
-  const open = input.match(/^(?:打开|启动|open|launch)\s+(.+)$/i);
-  if (open) return cmdOpen(withUser, open[1].trim());
-
-  // 应用列表 / apps
-  if (/^(应用列表|应用|apps|list apps)$/i.test(lower)) return cmdApps(withUser);
-
-  // 读取 / read [app]
-  const read = input.match(/^(?:读一下|读取|刷新读|读|read|inspect)\s*(.*)$/i);
-  if (read) return cmdRead(withUser, read[1].trim());
-
-  // 帮助 / help
-  if (/^(帮助|help|用法|能做什么|指令)\??$/i.test(lower)) return helpReply(withUser);
-
-  // 刷新 / refresh
-  if (/^(刷新|refresh|重新读取)$/i.test(lower)) return cmdRead(withUser, "");
-
-  // 点选 x y / probe x y
-  const probe = input.match(/^(?:点选|点|probe|hit)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/i);
-  if (probe) {
-    const x = num(probe[1]);
-    const y = num(probe[2]);
-    if (x !== null && y !== null) return cmdProbe(withUser, x, y);
+  switch (cmd?.kind) {
+    case "open":
+      return cmdOpen(withUser, cmd.target);
+    case "apps":
+      return cmdApps(withUser);
+    case "read":
+      return cmdRead(withUser, cmd.app);
+    case "refresh":
+      return cmdRead(withUser, "");
+    case "probe":
+      return cmdProbe(withUser, cmd.x, cmd.y);
+    case "move":
+      return cmdMoveWindow(withUser, cmd.x, cmd.y);
+    case "type":
+      return cmdType(withUser, cmd.text);
+    case "click":
+      return cmdClick(withUser, cmd.keyword);
+    case "focus":
+      return cmdFocus(withUser, cmd.keyword);
+    case "find":
+      return cmdFind(withUser, cmd.keyword);
+    default:
+      // Fallback: explain that natural language needs a configured model.
+      return reply(
+        withUser,
+        [
+          `没听懂「${truncate(input, 30)}」。`,
+          "当前没有配置 LLM，只能用快捷指令：",
+          "打开 / 读一下 / 找 <词> / 点击 <词> / 输入 <文本> / 帮助。",
+          "配置模型后就能直接说完整任务 —— 点 ⚙️ 设置，或在项目根目录 .env 里填 AX_EXPLORER_LLM_*。",
+        ].join("\n"),
+      );
   }
-
-  // 移动窗口 x y
-  const move = input.match(/^(?:移动窗口|移动|move(?:\s+window)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/i);
-  if (move) {
-    const x = num(move[1]);
-    const y = num(move[2]);
-    if (x !== null && y !== null) return cmdMoveWindow(withUser, x, y);
-  }
-
-  // 输入 <text> [@field]
-  const type = input.match(/^(?:输入|填写|输入文本|type|write)\s+(.+)$/is);
-  if (type) return cmdType(withUser, type[1].trim());
-
-  // 点击 <keyword>
-  const click = input.match(/^(?:点击|按下|点一下|click|press)\s+(.+)$/i);
-  if (click) return cmdClick(withUser, click[1].trim());
-
-  // 聚焦 <keyword>
-  const focus = input.match(/^(?:聚焦|focus)\s+(.+)$/i);
-  if (focus) return cmdFocus(withUser, focus[1].trim());
-
-  // 找 <keyword>
-  const find = input.match(/^(?:找|搜索|查找|find|search)\s+(.+)$/i);
-  if (find) return cmdFind(withUser, find[1].trim());
-
-  // Fallback: explain that natural language needs a configured model.
-  return reply(
-    withUser,
-    [
-      `没听懂「${truncate(input, 30)}」。`,
-      "当前没有配置 LLM，只能用快捷指令：",
-      "打开 / 读一下 / 找 <词> / 点击 <词> / 输入 <文本> / 帮助。",
-      "配置模型后就能直接说完整任务 —— 点 ⚙️ 设置，或在项目根目录 .env 里填 AX_EXPLORER_LLM_*。",
-    ].join("\n"),
-  );
 }
