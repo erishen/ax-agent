@@ -34,6 +34,9 @@ dotenvy = "0.15"
 tokio = { version = "1", features = ["time", "macros", "net", "rt", "rt-multi-thread", "sync"] }
 # Loopback JSON-RPC server for CLI / remote-agent observe+act (milestone 4).
 axum = { version = "0.7", features = [] }
+# Main-queue dispatch for AX calls: WKWebView-based apps crash the calling
+# process when an accessibility message arrives from a background thread.
+dispatch = "0.2"
 
 # macOS Accessibility API (AXUIElement) via the objc2 ecosystem.
 # objc2-core-foundation: CFString / CFArray / CFDictionary / CFNumber helpers.

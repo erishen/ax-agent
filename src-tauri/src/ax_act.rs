@@ -227,19 +227,27 @@ unsafe fn set_attribute<T: AsRef<CFType>>(
     attribute: &str,
     value: &T,
 ) -> Result<(), String> {
-    let name = CFString::from_str(attribute);
-    // SAFETY: `value` really is of the type the caller chose for this
-    // attribute (AXValue←CFString, AXFocused←CFBoolean, AXPosition←AXValue).
-    let err = element.set_attribute_value(&name, value.as_ref());
-    if err == AXError::Success {
-        Ok(())
-    } else {
-        Err(format!(
-            "设置 {attribute} 失败: {} ({})",
-            err.0,
-            ax_error_description(err)
-        ))
-    }
+    // Main-thread hop (WebKit background-thread crash guard). AXUIElement is
+    // not Send; cross the hop as raw pointers (both stay alive here).
+    let owned = element.clone();
+    let raw = &*owned as *const AXUIElement as usize;
+    let value_ptr = value.as_ref() as *const CFType as usize;
+    let attribute = attribute.to_string();
+    crate::ax_core::run_on_main(move || unsafe {
+        let name = CFString::from_str(&attribute);
+        // SAFETY: `value` really is of the type the caller chose for this
+        // attribute (AXValue←CFString, AXFocused←CFBoolean, AXPosition←AXValue).
+        let err = (&*(raw as *const AXUIElement)).set_attribute_value(&name, &*(value_ptr as *const CFType));
+        if err == AXError::Success {
+            Ok(())
+        } else {
+            Err(format!(
+                "设置 {attribute} 失败: {} ({})",
+                err.0,
+                ax_error_description(err)
+            ))
+        }
+    })
 }
 
 /// Read one display attribute of the element addressed by `path`
@@ -264,16 +272,20 @@ pub fn read_attribute_for_path(
 /// Check `AXUIElementIsAttributeSettable`; `Ok(false)`-style info is folded
 /// into a friendly message by the caller.
 fn is_settable(element: &AXUIElement, attribute: &str) -> Option<bool> {
-    unsafe {
-        let name = CFString::from_str(attribute);
+    // Main-thread hop (WebKit background-thread crash guard).
+    let owned = element.clone();
+    let raw = &*owned as *const AXUIElement as usize;
+    let attribute = attribute.to_string();
+    crate::ax_core::run_on_main(move || unsafe {
+        let name = CFString::from_str(&attribute);
         let mut settable: u8 = 0;
-        let err = element.is_attribute_settable(&name, NonNull::from(&mut settable));
+        let err = (&*(raw as *const AXUIElement)).is_attribute_settable(&name, NonNull::from(&mut settable));
         if err == AXError::Success {
             Some(settable != 0)
         } else {
             None
         }
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -415,9 +427,13 @@ pub fn focus_element_for_path(pid: i32, path: &[usize]) -> Result<(), String> {
 /// element does not implement the action.
 pub fn named_action_for_path(pid: i32, path: &[usize], action: &str) -> Result<(), String> {
     let element = element_at_path(pid, path)?;
-    unsafe {
-        let name = CFString::from_str(action);
-        let err = element.perform_action(&name);
+    // Main-thread hop (WebKit background-thread crash guard).
+    let owned = element.clone();
+    let raw = &*owned as *const AXUIElement as usize;
+    let action = action.to_string();
+    crate::ax_core::run_on_main(move || unsafe {
+        let name = CFString::from_str(&action);
+        let err = (&*(raw as *const AXUIElement)).perform_action(&name);
         if err == AXError::Success {
             Ok(())
         } else {
@@ -427,7 +443,7 @@ pub fn named_action_for_path(pid: i32, path: &[usize], action: &str) -> Result<(
                 ax_error_description(err)
             ))
         }
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -937,20 +953,18 @@ pub struct HitElement {
 /// # Errors
 /// Untrusted process, or no element at that position.
 fn hit_element_at_screen_position(x: f32, y: f32) -> Result<CFRetained<AXUIElement>, String> {
-    unsafe {
+    // Main-thread hop (WebKit background-thread crash guard): the hit-test
+    // goes through the target app's accessibility implementation, so querying
+    // a WKWebView app from a background thread still crashes the process.
+    // AXUIElement is not Send; cross the hop as a usize pointer address.
+    let ptr = crate::ax_core::run_on_main(move || unsafe {
         let system_wide = AXUIElement::new_system_wide();
         let _ = system_wide.set_messaging_timeout(2.0);
 
         let mut raw: *const AXUIElement = std::ptr::null();
         let err = system_wide.copy_element_at_position(x, y, NonNull::from(&mut raw));
         match err {
-            AXError::Success if !raw.is_null() => {
-                // SAFETY: on Success the API hands us a +1 retained element
-                // (Copy rule); CFRetained::from_raw takes ownership.
-                Ok(CFRetained::from_raw(NonNull::new_unchecked(
-                    raw as *mut AXUIElement,
-                )))
-            }
+            AXError::Success if !raw.is_null() => Ok(raw as usize),
             AXError::Success | AXError::NoValue => {
                 Err("该坐标下没有 UI 元素 (no element at position)".to_string())
             }
@@ -960,7 +974,10 @@ fn hit_element_at_screen_position(x: f32, y: f32) -> Result<CFRetained<AXUIEleme
                 ax_error_description(other),
             )),
         }
-    }
+    })?;
+    // SAFETY: non-null on Success (checked above); the +1 retain from the
+    // Copy rule is handed to CFRetained::from_raw on this (original) thread.
+    Ok(unsafe { CFRetained::from_raw(NonNull::new_unchecked(ptr as *mut AXUIElement)) })
 }
 
 /// Return the UI element under the given *global* screen position (points,

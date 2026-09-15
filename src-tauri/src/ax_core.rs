@@ -423,6 +423,34 @@ struct CFRangeStruct {
 }
 
 // ---------------------------------------------------------------------------
+// Main-thread dispatch (WebKit crash guard)
+// ---------------------------------------------------------------------------
+
+/// Run a closure on the main thread and return its value.
+///
+/// The macOS Accessibility API is generally callable from any thread, but
+/// **WebKit** (any WKWebView-based app) explicitly crashes the *calling
+/// process* — `WebKit::crashDueToApplicationCallingMainThreadOnlyWebKitAPIFromBackgroundThread`
+/// → SIGTRAP — when an AX message arrives from a background thread. Our AX
+/// calls run on tokio worker threads, so every AX IPC entry point must hop
+/// to the main queue first. No-op (no hop) when already on the main thread,
+/// so synchronous handlers cannot deadlock.
+pub(crate) fn run_on_main<T: Send + 'static, F: FnOnce() -> T + Send + 'static>(f: F) -> T {
+    use objc2_foundation::NSThread;
+    if NSThread::isMainThread_class() {
+        return f();
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut slot = Some(f);
+    let block = move || {
+        let f = slot.take().expect("run_on_main block invoked twice");
+        let _ = tx.send(f());
+    };
+    dispatch::Queue::main().exec_async(block);
+    rx.recv().expect("main queue is not running")
+}
+
+// ---------------------------------------------------------------------------
 // Attribute reading
 // ---------------------------------------------------------------------------
 
@@ -480,23 +508,30 @@ pub(crate) fn copy_attribute(
     element: &AXUIElement,
     attribute: &str,
 ) -> Result<Option<CFRetained<CFType>>, AXError> {
-    unsafe {
-        let name = CFString::from_str(attribute);
-        let mut raw: *const CFType = std::ptr::null();
-        let err = element.copy_attribute_value(&name, NonNull::from(&mut raw));
+    // Hop to the main thread: querying a WKWebView app from a background
+    // thread crashes the whole process (WebKit main-thread-only guard).
+    // AXUIElement is not Send, so cross the hop as a raw pointer; `owned`
+    // stays alive for the duration of the synchronous call. The result
+    // crosses back as a plain pointer address (the +1 Copy-rule retain is
+    // re-wrapped into CFRetained on this thread).
+    let owned = element.clone();
+    let raw = &*owned as *const AXUIElement as usize;
+    let attribute = attribute.to_string();
+    let ptr = run_on_main(move || unsafe {
+        let element = &*(raw as *const AXUIElement);
+        let name = CFString::from_str(&attribute);
+        let mut raw_value: *const CFType = std::ptr::null();
+        let err = element.copy_attribute_value(&name, NonNull::from(&mut raw_value));
         match err {
-            AXError::Success if !raw.is_null() => {
-                // SAFETY: on Success the API hands us a +1 retained CFTypeRef
-                // (Copy rule); CFRetained::from_raw takes ownership of it.
-                Ok(Some(CFRetained::from_raw(NonNull::new_unchecked(
-                    raw as *mut CFType,
-                ))))
-            }
+            AXError::Success if !raw_value.is_null() => Ok(Some(raw_value as usize)),
             AXError::Success => Ok(None), // success but null value
             AXError::NoValue | AXError::AttributeUnsupported => Ok(None),
             other => Err(other),
         }
-    }
+    })?;
+    // SAFETY: the pointer came from a Success copy (+1 retain, Copy rule) and
+    // is handed to CFRetained::from_raw on this (original) thread.
+    Ok(ptr.map(|p| unsafe { CFRetained::from_raw(NonNull::new_unchecked(p as *mut CFType)) }))
 }
 
 /// Read a string attribute, if present and of string type.
@@ -519,50 +554,89 @@ pub(crate) fn copy_multiple_attributes(
     element: &AXUIElement,
     names: &[&str],
 ) -> Result<Vec<Option<CFRetained<CFType>>>, AXError> {
-    unsafe {
+    // Main-thread hop (WebKit background-thread crash guard). AXUIElement is
+    // not Send; cross the hop as a raw pointer (see copy_attribute). The batch
+    // result also crosses as pointers: the array's +1 Copy-rule retain and
+    // each element's +1 get-retain are re-wrapped into CFRetained here.
+    let owned = element.clone();
+    let raw = &*owned as *const AXUIElement as usize;
+    let names: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
+    let (array_ptr, items) = run_on_main(move || unsafe {
+        let element = &*(raw as *const AXUIElement);
         let cfnames: Vec<CFRetained<CFString>> =
             names.iter().map(|n| CFString::from_str(n)).collect();
         let attributes = CFArray::from_retained_objects(&cfnames);
-        let mut raw: *const CFArray = std::ptr::null();
+        let mut raw_array: *const CFArray = std::ptr::null();
         let err = element.copy_multiple_attribute_values(
             attributes.as_opaque(),
             objc2_application_services::AXCopyMultipleAttributeOptions(0), // options=0: fill every slot (kCFNull on failure)
-            NonNull::from(&mut raw),
+            NonNull::from(&mut raw_array),
         );
-        if err != AXError::Success || raw.is_null() {
+        if err != AXError::Success || raw_array.is_null() {
             return Err(err);
         }
         // SAFETY: +1 retained CFArrayRef (Copy rule) on Success.
-        let array = CFRetained::from_raw(NonNull::new_unchecked(raw as *mut CFArray));
+        let array = CFRetained::from_raw(NonNull::new_unchecked(raw_array as *mut CFArray));
         // SAFETY: every entry is a CFTypeRef (some may be kCFNull).
         let typed = array.cast_unchecked::<CFType>();
-        let mut out = Vec::with_capacity(names.len());
+        let mut items = Vec::with_capacity(names.len());
         for i in 0..names.len() {
             // `get` retains each element (+1); kCFNull marks a failed read.
+            // The retain is preserved for the re-wrap on this thread.
             match typed.get(i) {
-                Some(item) if item.downcast_ref::<CFNull>().is_some() => out.push(None),
-                Some(item) => out.push(Some(item)),
-                None => out.push(None),
+                Some(item) if item.downcast_ref::<CFNull>().is_some() => items.push(None),
+                Some(item) => {
+                    let p = &*item as *const CFType as usize;
+                    std::mem::forget(item); // keep the +1 retain
+                    items.push(Some(p));
+                }
+                None => items.push(None),
             }
         }
-        Ok(out)
+        let array_ptr = &*array as *const CFArray as usize;
+        std::mem::forget(array); // keep the +1 Copy-rule retain
+        Ok((array_ptr, items))
+    })?;
+
+    // Re-wrap both retains on this thread; ownership is now exact again.
+    let array = unsafe { CFRetained::from_raw(NonNull::new_unchecked(array_ptr as *mut CFArray)) };
+    // SAFETY: every entry of the batch result is a CFTypeRef (some kCFNull).
+    let typed = unsafe { array.cast_unchecked::<CFType>() };
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            Some(p) => {
+                // SAFETY: the pointer is a +1 get-retain preserved above; the
+                // backing array is alive via `array`.
+                out.push(Some(unsafe {
+                    CFRetained::from_raw(NonNull::new_unchecked(p as *mut CFType))
+                }));
+            }
+            None => out.push(None),
+        }
     }
+    drop(array);
+    Ok(out)
 }
 
 /// Copy the list of actions this element supports (e.g. AXPress, AXIncrement).
 pub(crate) fn copy_action_names(element: &AXUIElement) -> Vec<String> {
-    unsafe {
-        let mut raw: *const CFArray = std::ptr::null();
-        let err = element.copy_action_names(NonNull::from(&mut raw));
-        if err != AXError::Success || raw.is_null() {
+    // Main-thread hop (WebKit background-thread crash guard).
+    let owned = element.clone();
+    let raw = &*owned as *const AXUIElement as usize;
+    run_on_main(move || unsafe {
+        let element = &*(raw as *const AXUIElement);
+        let mut raw_array: *const CFArray = std::ptr::null();
+        let err = element.copy_action_names(NonNull::from(&mut raw_array));
+        if err != AXError::Success || raw_array.is_null() {
             return Vec::new();
         }
         // SAFETY: +1 retained CFArrayRef (Copy rule), non-null on Success.
-        let array = CFRetained::from_raw(NonNull::new_unchecked(raw as *mut CFArray));
+        let array = CFRetained::from_raw(NonNull::new_unchecked(raw_array as *mut CFArray));
         // Every entry of AXUIElementCopyActionNames is a CFString.
         let typed = array.cast_unchecked::<CFString>();
         typed.iter().map(|s| s.to_string()).collect()
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -794,17 +868,25 @@ pub fn perform_action_for_path(pid: i32, path: &[usize], action: &str) -> Result
                 .ok_or_else(|| format!("路径失效: 子索引 {index} 越界"))?;
         }
 
-        let action_name = CFString::from_str(action);
-        let err = element.perform_action(&action_name);
-        if err == AXError::Success {
-            Ok(())
-        } else {
-            Err(format!(
-                "执行 {action} 失败: {} ({})",
-                err.0,
-                ax_error_description(err)
-            ))
-        }
+        // Main-thread hop (WebKit background-thread crash guard). `element`
+        // is not Send; cross the hop as a raw pointer (it stays alive here).
+        let raw = &*element as *const AXUIElement as usize;
+        let action = action.to_string();
+        run_on_main(move || {
+            let name = CFString::from_str(&action);
+            // SAFETY (performed within the enclosing unsafe block): element
+            // pointer is valid for the duration of the call.
+            let err = (&*(raw as *const AXUIElement)).perform_action(&name);
+            if err == AXError::Success {
+                Ok(())
+            } else {
+                Err(format!(
+                    "执行 {action} 失败: {} ({})",
+                    err.0,
+                    ax_error_description(err)
+                ))
+            }
+        })
     }
 }
 
