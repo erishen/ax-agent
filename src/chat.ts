@@ -855,9 +855,19 @@ async function runTool(
         // Detail-page play guidance: self-drawn players (Tencent Video etc.)
         // render the play control as an unlabeled image button the OCR can't
         // name — tell the model where to look / how to fall back to keyboard.
-        const inDetail = !playing && /简介|评分|立即播放|播放第|第\d+集/.test(joined);
+        // 「立即播放」is NOT a detail marker: the resume toast on the home
+        // page shows it too, which would mis-fire this hint.
+        const inDetail = !playing && /简介|评分|播放第|第\d+集/.test(joined);
         const playHint = inDetail
           ? "\n（详情页播放按钮多为无文字的绿色大按钮，位于片名/简介行的下方或右侧；OCR 识别不到按钮文字时，可先按空格键尝试播放，或对按钮区域再 ocr 一次）"
+          : "";
+        // Resume-dialog hint: Tencent Video opens a "继续播放之前关闭的 N 个视频"
+        // toast over the home page. Clicking home cards underneath (stale
+        // resume items) either starts playing something the user had closed or
+        // does nothing — close the toast first at the OCR coordinates.
+        const resume = /继续播放之前关闭的\s*\d+\s*个视频/.test(joined);
+        const dialogHint = resume
+          ? "\n（检测到「继续播放」弹窗：先点击 OCR 中「关闭」或「立即播放」的坐标处理掉它，再操作首页其他内容——直接点首页卡片可能误播你之前关闭的视频）"
           : "";
         return {
           result:
@@ -867,6 +877,7 @@ async function runTool(
               ? "\n（检测到「播放中」标记：视频已在播放，按规则立即 done 汇报，不要再点击）"
               : "") +
             playHint +
+            dialogHint +
             qualityNote,
           state,
         };
@@ -1530,9 +1541,12 @@ async function runSteps(
         // Exact-signature dedup above is dodged by micro-adjusting coordinates
         // (115,318 → 118,320), and self-drawn UIs (Tencent Video etc.) render
         // nothing into the AX tree, so the model literally cannot see the
-        // result of a click unless it ocr/wait_for. If the current run —
-        // clicks since the last observe/scroll/other — reaches 3 clicks with
-        // no observation in between, block and demand a re-read.
+        // result of a click unless it ocr/wait_for. Same-region repeats are
+        // the true blindness loop and get BLOCKED; clicks at different
+        // coordinates may still be legitimate progression (e.g. closing a
+        // dialog after two stray probes), so those get a warning appended to
+        // the real result instead of being refused.
+        let blindWarn: string | null = null;
         const isClickTool =
           call.function.name === "click_at" || call.function.name === "double_click_at";
         const cx = isClickTool && typeof args.x === "number" ? Number(args.x) : null;
@@ -1549,26 +1563,28 @@ async function runSteps(
             const allNear = run.every((p) =>
               run.every((q) => Math.abs(p.x - q.x) <= 60 && Math.abs(p.y - q.y) <= 60),
             );
-            const hint = allNear
-              ? `您已在同一区域连续点击 ${run.length} 次（坐标相距 ≤60pt），且期间没有任何观察。\n` +
+            if (allNear) {
+              const hint =
+                `您已在同一区域连续点击 ${run.length} 次（坐标相距 ≤60pt），且期间没有任何观察。\n` +
                 "点击后页面毫无变化的原因排查（自绘 UI 不读屏就看不见）：\n" +
                 "1. 目标已不在该坐标（窗口移动/最大化/滚动后布局变了）→ 先 ocr 找导航项当前位置；\n" +
                 "2. 点击被弹窗/覆盖层挡住 → 先 ocr 找「关闭/取消」；\n" +
                 "3. 页面切换有延迟 → 用 wait_for text=页面特征词（勿用导航栏恒在的词）等待。\n" +
-                "请先 ocr 复核现状再决定下一步，不要继续盲点同一位置。"
-              : `您已连续点击 ${run.length} 次且中间没有任何 ocr/wait_for 验证。` +
-                "自绘 UI 中每步点击后都应观察：\n" +
-                "- 点完先 wait_for text=目标页面特征词 或 ocr，确认真的切换了；\n" +
-                "- 页面无变化就换坐标/换方式，不要连续盲点。";
-            const seq = `${seqBase + steps + 1}/${budget}`;
-            const heading = stepHeading(seq, call.function.name, args);
-            const stepId = nextId++;
-            working = commit({
-              ...working,
-              messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, hint) }],
-            });
-            llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: hint });
-            continue;
+                "请先 ocr 复核现状再决定下一步，不要继续盲点同一位置。";
+              const seq = `${seqBase + steps + 1}/${budget}`;
+              const heading = stepHeading(seq, call.function.name, args);
+              const stepId = nextId++;
+              working = commit({
+                ...working,
+                messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, hint) }],
+              });
+              llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: hint });
+              continue;
+            }
+            blindWarn =
+              `⚠️ 您已连续点击 ${run.length} 次且中间没有任何 ocr/wait_for 验证（本次已执行）。` +
+              "自绘 UI 中每步点击后都应观察：点完先 wait_for 页面特征词或 ocr 确认真的切换了；" +
+              "页面无变化就换坐标/换方式，不要连续盲点。";
           }
         }
         if (isClickTool && cx !== null && cy !== null) {
@@ -1588,7 +1604,8 @@ async function runSteps(
           ...working,
           messages: [...working.messages, { id: stepId, role: "assistant", text: heading }],
         });
-        const { result, state: next, dangerous } = await runTool(working, call.function.name, args);
+        const { result: rawResult, state: next, dangerous } = await runTool(working, call.function.name, args);
+        const result = blindWarn ? `${rawResult}\n${blindWarn}` : rawResult;
         working = next;
         if (dangerous) {
           working = commit({
