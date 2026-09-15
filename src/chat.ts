@@ -549,6 +549,14 @@ type RecentMove =
 const recentMoves: RecentMove[] = [];
 
 /**
+ * Consecutive element_at -25208 failures (self-drawn app). After two strikes
+ * the app is confirmed to have no accessibility API — keep telling the model
+ * to stop calling element_at/read_screen instead of burning steps. Reset on
+ * open_app so switching to a real AX app clears the flag.
+ */
+let elementAtFails = 0;
+
+/**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
  * desktop when the model guesses out-of-window coordinates. Returns the
@@ -642,6 +650,7 @@ async function runTool(
           /* outline is best-effort */
         }
         state = { ...state, pid: app.pid, appName: app.name, outline };
+        elementAtFails = 0; // new target app → re-arm element_at probes
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -769,8 +778,26 @@ async function runTool(
           : keyword
             ? `「${keyword}」在 ${timeout}s 内未${gone ? "消失" : "出现"}`
             : `界面在 ${timeout}s 内无变化`;
+        // Nav words are always on screen — waiting for them proves nothing
+        // about page switches and fails hard when OCR garbles the whole bar.
+        const NAV_WORDS = [
+          "首页", "电影", "电视剧", "综艺", "动漫", "少儿", "你正在追",
+          "VIP会员", "片库", "NBA", "短剧", "小游戏", "纪录片", "体育",
+        ];
+        const navHint =
+          ocrText && !gone && NAV_WORDS.some((w) => ocrText.includes(w))
+            ? `\n注意：「${ocrText}」是导航栏常驻词，几乎任何页面都有，等它出现无法证明页面切换。` +
+              "应等页面切换后才会出现的特征词：频道页的筛选栏（最热/最新/高分好评/类型）、影片名、评分数字等。"
+            : "";
+        const lowConfWords = lastWords.filter((w) => w.confidence < 0.5).length;
+        const garbledHint =
+          lastWords.length > 3 &&
+          (lowConfWords / lastWords.length > 0.5 || lowConfWords >= 10)
+            ? `\n⚠️ 当前 OCR 质量差（大量乱码词），页面可能在加载/动画中，或窗口被遮挡/未在前台。` +
+              "建议：wait_for 1-2s 后重扫；若持续乱码，尝试 move_window maximize 或确认目标应用在前台。"
+            : "";
         return {
-          result: `${tail}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
+          result: `${tail}${navHint}${garbledHint}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
           state,
         };
       }
@@ -881,7 +908,7 @@ async function runTool(
         const lowConf = words.filter((w) => w.confidence < 0.5).length;
         const qualityNote =
           words.length > 3 && (lowConf / words.length > 0.5 || lowConf >= 10)
-            ? "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面。"
+            ? "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面；若连续多次乱码，检查窗口是否被遮挡/未最大化（move_window maximize）或目标应用是否在前台。"
             : "";
         // Detail-page play guidance: self-drawn players (Tencent Video etc.)
         // render the play control as an unlabeled image button the OCR can't
@@ -1091,8 +1118,13 @@ async function runTool(
         } catch (e) {
           const msg = String(e);
           if (msg.includes("-25208")) {
+            elementAtFails += 1;
+            const persistent =
+              elementAtFails >= 2
+                ? `（已连续失败 ${elementAtFails} 次：该应用确认不支持 element_at/read_screen，请不要再调用它们，只用 ocr 读屏 + click_at 操作推进）`
+                : "这个应用请改用 ocr 读界面、click_at 操作，element_at/read_screen 对它不可用。";
             return {
-              result: `element_at 在该位置失败（错误 -25208 = 应用不实现辅助功能 API，典型自绘 UI）。这个应用请改用 ocr 读界面、click_at 操作，element_at/read_screen 对它不可用。`,
+              result: `element_at 在该位置失败（错误 -25208 = 应用不实现辅助功能 API，典型自绘 UI）。${persistent}`,
               state,
             };
           }
