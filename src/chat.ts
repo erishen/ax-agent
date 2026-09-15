@@ -47,6 +47,13 @@ import {
   windowBounds,
 } from "./api";
 import type { AxAppInfo, AxNode, OcrScreenWord } from "./types";
+import {
+  RATING_RE,
+  buildPairs,
+  detectPage,
+  parseMiniTitle,
+  sharesBigram,
+} from "./tencent";
 import type { MenuEntry } from "./api";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
 import { invoke } from "@tauri-apps/api/core";
@@ -647,16 +654,6 @@ let lastOcrChannelHome = false;
 
 /** True when a and b share a ≥2-char run (「抓特务」vs OCR 残字「扒特务」
  * share 「特务」). Used to match film titles across OCR noise. */
-function sharesBigram(a: string, b: string): boolean {
-  const short = a.length <= b.length ? a : b;
-  const long = a.length <= b.length ? b : a;
-  if (short.length < 2) return false;
-  for (let i = 0; i + 2 <= short.length; i++) {
-    if (long.includes(short.slice(i, i + 2))) return true;
-  }
-  return false;
-}
-
 /** One-shot reminder consumed by the next non-ocr action (scroll/click/
  * key): "you just tapped a sort tab, verify it took effect before acting
  * again". Returns "" when nothing is pending. */
@@ -966,97 +963,22 @@ async function runTool(
         // poster (nearest plausible Chinese text), so the model clicks the
         // TITLE's coordinates — clicking near the rating badge lands on the
         // neighbouring poster (the 8.7-film-instead-of-9.1 bug).
-        const NAV = /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
-        const RATING = /^(\d[.:]\d)(分)?$/;
         const rating = words.find(
-          (w) => RATING.test(w.text) && w.confidence >= 0.5,
+          (w) => RATING_RE.test(w.text) && w.confidence >= 0.5,
         );
-        // 「你正在追」/ history page: cards carry viewing-progress tags and
-        // clicking one RESUME-PLAYS it directly instead of opening a detail
-        // page. Its ratings are for films the user already watched — not a
-        // high-score candidate pool. Suppress pairing so the model is not
-        // steered into clicking a watched film, and warn explicitly.
-        const watchedPage = /观看至\s*\d+\s*%|已看完|继续观看/.test(joined);
-        // Detail-page markers (declared before pairing: a detail title sits
-        // above its rating with dx≈109, while neighbouring list cards are
-        // dx≈200 apart — pairing rules differ between the two).
-        const detailPage = /简介[＞>〉]|选集|播放列表/.test(joined);
+        // Page classification lives in src/tencent.ts (pure, regression-
+        // tested) — see detectPage for the per-session rule provenance.
+        const flags = detectPage(joined);
+        const { watchedPage, detailPage, channelHome, homeLike, playing, listPage } = flags;
         lastOcrDetail = detailPage;
-        // Channel home (电影/电视剧… feed): the nav strip sits on the left
-        // like the main home, but the content area is a rated channel feed
-        // (电影热播榜第1名 + a 9.3 badge). homeLike must NOT swallow it —
-        // 17:07 session: after tapping 电影 the model was told "this is the
-        // home, no rating candidates" while a 9.3 badge was on screen, then
-        // it flailed on the sort tabs. 热播榜 is channel-feed only (the
-        // main home shows 飙升总榜/热搜总榜), so it disables homeLike; the
-        // feed's ratings stay pair-able and get their own click hint.
-        const channelHome =
-          !/返回|最热|最新|高分好评|简介[＞>]|选集|播放列表|播放中|正在播放/.test(joined) &&
-          /热播榜/.test(joined);
+        lastOcrPlayer = playing;
         lastOcrChannelHome = channelHome;
-        // Home / navigation page: no list markers (back, sort tabs), no
-        // detail markers, no player markers, but carrying the 你正在追 nav
-        // word. The home page ALSO shows rated recommendation cards
-        // (16:43 session: 马腾你别走 9.7 on the home feed) — and a Tencent
-        // card click PLAYS directly, so rating pairs there are not a
-        // channel candidate pool. Moving the window makes Tencent reset to
-        // home (its known behaviour), which is how the model ended up
-        // scrolling the home feed hunting for the 9.7 it had paired.
-        const homeLike =
-          !/(返回|最热|最新|高分好评|类型|资费|地区|简介[＞>〉]|选集|播放列表|播放中|正在播放|播放[片日F！]|放中)/.test(joined) &&
-          /你正在追/.test(joined);
+        lastOcrList = listPage;
         let pairs: string[] = [];
-        lastListPairs = [];
-        if (rating && !watchedPage && !homeLike) {
-          const cx = (w: OcrScreenWord) => w.x + w.w / 2;
-          for (const r of words) {
-            if (!RATING.test(r.text) || r.confidence < 0.5) continue;
-            const title = words
-              .filter(
-                (t) =>
-                  t !== r &&
-                  !RATING.test(t.text) &&
-                  t.confidence >= 0.5 &&
-                  t.text.length >= 2 &&
-                  /^[\u4e00-\u9fa5《》·\s0-9A-Za-z]+$/.test(t.text) &&
-                  !NAV.test(t.text) && !/月\d+日|定档|上映|巨制|打爆/.test(t.text) &&
-                  // Actor/genre rows read as "雷佳音 张国立 警匪打黑" —
-                  // space-separated multi-word lines are cast + genre, not a
-                  // film title (14:05 session: it was paired with a 9.4
-                  // rating that belonged to the neighbouring film, so the
-                  // model believed 坚如磐石 was 9.4 and opened a sub-9 film).
-                  !/\s/.test(t.text) &&
-                  // Episode/series labels (第二部/第3集) are episode chips,
-                  // not titles (14:05 session: 「第二部」 scored 9.4).
-                  !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text) &&
-                  // List pages: rating badges sit directly below their own
-                  // card's title (dx < 100; columns are ~200px apart), so a
-                  // title paired with a rating from a NEIGHBOURING card is a
-                  // mis-pair — the rating belongs to the next film (16:51
-                  // session: 我看见两朵一样的云 9.0, 红海行动 9.8, 等风来
-                  // 9.1 were all real ratings of adjacent cards; the films
-                  // are ~8.3). Detail pages pair differently (title above
-                  // rating, dx≈109), so the hard dx bound applies on lists
-                  // only; detail pairs are still used for mini-player
-                  // matching after a card click.
-                  (detailPage || Math.abs(cx(t) - cx(r)) < 100),
-              )
-              .map((t) => ({ t, d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y) }))
-              .sort((a, b) => a.d - b.d)[0];
-            if (title && title.d < (detailPage ? 220 : 150)) {
-              const t = title.t.text.trim();
-              // The user already watched this film (mini-player resume,
-              // 你正在追 history): it must not be offered as the pick.
-              if (seenTitles.some((s) => sharesBigram(t, s))) continue;
-              const score = r.text.replace("分", "");
-              const tx = Math.round(title.t.x + title.t.w / 2);
-              const ty = Math.round(title.t.y + title.t.h / 2);
-              lastListPairs.push({ title: t, score, x: tx, y: ty });
-              pairs.push(`「${t}」评分 ${score} 分 → 点片名坐标 (${tx}, ${ty})`);
-            }
-          }
-          pairs = [...new Set(pairs)].slice(0, 6);
-        }
+        lastListPairs =
+          rating && !watchedPage && !homeLike
+            ? buildPairs(words, { seenTitles, detailPage })
+            : [];
         // Tell the model why a rated card may be missing from the pairs —
         // it is a watched film, not an OCR miss.
         const seenOnScreen = seenTitles.filter((s) =>
@@ -1073,8 +995,6 @@ async function runTool(
         //     previously closed videos, so the banner shows 「播放中 第N集」
         //     even though the model clicked nothing. Treating that as task
         //     evidence would finish on the wrong video.
-        const playing = /播放中|正在播放|播放[片日F！]|放中/.test(joined);
-        lastOcrPlayer = playing;
         const playerEvidence = /简介|评分|播放第|选集|倍速|杜比|语言|\d{1,2}:\d{2}/.test(joined);
         // Try to name the banner: the title word on the same row, within a
         // moderate distance right/left of the 播放中 marker.
@@ -1198,13 +1118,7 @@ async function runTool(
         let miniSeenTitle = "";
         let miniPlaying = "";
         if (miniWord) {
-          let raw = miniWord.text
-            .replace(/^[I1口]{1,2}\s*/, "")
-            .replace(/播放中|正在播放|播放[片日F！]|放中|第\d+[话集期][^，。\s（【]*/g, "")
-            .replace(/^\s*口/, "")
-            .replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, "")
-            .replace(/(国语|普通话|粤语|原声|普通|英文|双语|高清|蓝光|话版)+$/g, "")
-            .trim();
+          const raw = parseMiniTitle(miniWord.text);
           if (raw.length >= 2) {
             const isTaskFilm = lastListPairs.some((p) => sharesBigram(p.title, raw));
             if (isTaskFilm) {
@@ -1236,17 +1150,6 @@ async function runTool(
         // List/channel page without any rating digits: the model tends to
         // re-click filter tabs (already selected) instead of scrolling to
         // read the per-card ratings. Guide it to scroll / open a detail.
-        const listPage =
-          /〈返回|‹返回|←返回|<返回|›返回/.test(joined) &&
-          !/\d+\.\d/.test(joined) &&
-          !playing;
-        lastOcrList = listPage;
-        // The sort-verify flag is one-shot: the click warning was already
-        // shown, and an OCR cannot tell whether a selected tab changed
-        // (highlight is invisible to OCR, all tab words stay on screen) —
-        // keeping it set spams every later click with the same warning
-        // (17:07 session: steps 11/14/22/25 all re-warned). Clear on OCR.
-        if (pendingSortVerify) pendingSortVerify = false;
         // Recognize the current sort from the channel header, e.g.
         // 「电影 •最热 •院线电影」/「电影•高分好评•全部电影」. The model
         // keeps scrolling a 最热 list hunting for badges the sort does not
