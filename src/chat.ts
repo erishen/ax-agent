@@ -573,6 +573,11 @@ let lastListPairs: Array<{ title: string; score: string; x: number; y: number }>
  */
 let scrollsSinceRating = 0;
 
+/** Whether the most recent OCR was a list/channel page (has a back marker,
+ * no rating digits). Gates the sort-tab click hint so the home page top
+ * area does not get flagged as a filter bar. */
+let lastOcrList = false;
+
 /**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
@@ -670,6 +675,7 @@ async function runTool(
         elementAtFails = 0; // new target app → re-arm element_at probes
         lastListPairs = []; // stale rating pairs from the previous app
         scrollsSinceRating = 0;
+        lastOcrList = false;
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -905,11 +911,11 @@ async function runTool(
         //     previously closed videos, so the banner shows 「播放中 第N集」
         //     even though the model clicked nothing. Treating that as task
         //     evidence would finish on the wrong video.
-        const playing = /播放中|正在播放/.test(joined);
+        const playing = /播放中|正在播放|播放[片日F！]|放中/.test(joined);
         const playerEvidence = /简介|评分|播放第|选集|倍速|杜比|语言|\d{1,2}:\d{2}/.test(joined);
         // Try to name the banner: the title word on the same row, within a
         // moderate distance right/left of the 播放中 marker.
-        const pw = playing ? words.find((w) => /播放中|正在播放/.test(w.text)) : undefined;
+        const pw = playing ? words.find((w) => /播放中|正在播放|播放[片日F！]|放中/.test(w.text)) : undefined;
         let playingTitle = "";
         if (pw) {
           const near = words
@@ -964,14 +970,19 @@ async function runTool(
         // auto-resuming a previously closed video — NOT evidence the task
         // film is playing, even when a rated detail page is on screen.
         // Only a 播放中 marker in the page body counts as playback proof.
-        const miniPlayer = pw !== undefined && pw.y < 140;
-        const playingHint = playing
-          ? miniPlayer
-            ? `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成）`
-            : playerEvidence
+        // The strip's state word OCRs as noise (播放片/播放F/播放日/放中),
+        // so any 第N话/集 marker at y<140 flags the mini-player too, even
+        // without a readable 「播放中」.
+        const topEpi = words.find((w) => w.y < 140 && /第\d+[话集]/.test(w.text));
+        const miniPlayer = topEpi !== undefined || (pw !== undefined && pw.y < 140);
+        const miniHint = `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成）`;
+        const playingHint = miniPlayer
+          ? miniHint
+          : playing
+            ? playerEvidence
               ? `\n（检测到「播放中」标记：${playingTitle}视频已在播放页播放，按规则立即 done 汇报，不要再点击）`
               : `\n（检测到「播放中」标记${playingTitle}但缺少播放器证据：先确认是否真在播放（时间码/选集/倍速控件），若只是页面残留标记则继续任务）`
-          : "";
+            : "";
         // List/channel page without any rating digits: the model tends to
         // re-click filter tabs (already selected) instead of scrolling to
         // read the per-card ratings. Guide it to scroll / open a detail.
@@ -979,6 +990,7 @@ async function runTool(
           /〈返回|‹返回|←返回|<返回|›返回/.test(joined) &&
           !/\d+\.\d/.test(joined) &&
           !playing;
+        lastOcrList = listPage;
         // Track consecutive rating-less list OCRs so the hint can escalate
         // from "scroll another screen" to "switch sort / open a detail".
         if (rating) {
@@ -1351,7 +1363,7 @@ async function runTool(
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
-        } else if (Math.round(y) <= 280 && Math.round(x) >= 230) {
+        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 230) {
           // No rating pairs on screen (rating-less list): a click in the
           // top filter/sort band is probably a sort tab. Sorting switches
           // (最热/高分好评/类型) can be slow or fail silently — verify.
@@ -1390,7 +1402,7 @@ async function runTool(
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
-        } else if (Math.round(y) <= 280 && Math.round(x) >= 230) {
+        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 230) {
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
         }
