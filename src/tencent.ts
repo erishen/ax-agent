@@ -80,6 +80,13 @@ export function detectPage(joined: string): PageFlags {
   return { watchedPage, detailPage, channelHome, homeLike, listPage, playing };
 }
 
+export const MIN_CONFIDENCE = 0.5; // word-confidence floor for ratings/titles
+export const PAIR_COL_DX = 100; // same-column bound: list columns are ~200px apart
+export const PAIR_MAX_D_LIST = 150; // pair distance budget on list pages
+export const PAIR_MAX_D_DETAIL = 220; // detail page: title sits above rating (dx≈109)
+export const MINI_STRIP_Y = 150; // top strip / mini-player band
+export const MAX_PAIR_HINTS = 6; // candidate hints cap per OCR
+
 export interface PairCandidate {
   title: string;
   score: string;
@@ -108,13 +115,13 @@ export function buildPairs(
   const seen = opts.seenTitles;
   const out: PairCandidate[] = [];
   for (const r of words) {
-    if (!RATING_RE.test(r.text) || r.confidence < 0.5) continue;
+    if (!RATING_RE.test(r.text) || r.confidence < MIN_CONFIDENCE) continue;
     const title = words
       .filter(
         (t) =>
           t !== r &&
           !RATING_RE.test(t.text) &&
-          t.confidence >= 0.5 &&
+          t.confidence >= MIN_CONFIDENCE &&
           t.text.length >= 2 &&
           TITLE_CHARS.test(t.text) &&
           !NAV_RE.test(t.text) &&
@@ -133,14 +140,14 @@ export function buildPairs(
           // 我看见两朵一样的云 9.0 / 红海行动 9.8 / 等风来 9.1 were all
           // adjacent-card ratings; the films are ~8.3). Detail pages pair
           // differently (title above rating, dx≈109).
-          (opts.detailPage || Math.abs(cx(t) - cx(r)) < 100),
+          (opts.detailPage || Math.abs(cx(t) - cx(r)) < PAIR_COL_DX),
       )
       .map((t) => ({
         t,
         d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y),
       }))
       .sort((a, b) => a.d - b.d)[0];
-    if (title && title.d < (opts.detailPage ? 220 : 150)) {
+    if (title && title.d < (opts.detailPage ? PAIR_MAX_D_DETAIL : PAIR_MAX_D_LIST)) {
       const t = title.t.text.trim();
       // The user already watched this film (mini-player resume, 你正在追
       // history): it must not be offered as the pick.

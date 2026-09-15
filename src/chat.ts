@@ -48,6 +48,9 @@ import {
 } from "./api";
 import type { AxAppInfo, AxNode, OcrScreenWord } from "./types";
 import {
+  MAX_PAIR_HINTS,
+  MIN_CONFIDENCE,
+  MINI_STRIP_Y,
   RATING_RE,
   buildPairs,
   detectPage,
@@ -641,7 +644,35 @@ let pendingSortVerify = false;
  * so paired candidates that overlap a seen title are suppressed. Kept
  * across open_app: watched films stay watched.
  */
-let seenTitles: string[] = [];
+const SEEN_KEY = "axExplorer.seenTitles.v1";
+function loadSeenTitles(): string[] {
+  try {
+    const raw = localStorage.getItem(SEEN_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string" && s.length >= 2) : [];
+  } catch {
+    return [];
+  }
+}
+/** Persist across sessions: the user's watched films stay watched even
+ * after the app restarts (TaUI webview keeps localStorage). */
+function rememberSeen(title: string) {
+  if (!seenTitles.includes(title)) {
+    seenTitles.push(title);
+    try {
+      localStorage.setItem(SEEN_KEY, JSON.stringify(seenTitles));
+    } catch {
+      /* storage full / unavailable — in-memory is still fine */
+    }
+  }
+}
+let seenTitles: string[] = loadSeenTitles();
+// Quality-note gating: loading/animation frames flash low-confidence words
+// on EVERY OCR, so the note would spam itself. Only after TWO consecutive
+// low-quality reads, and at most once per 3 OCRs.
+let qualityStreak = 0;
+let ocrSinceQualityNote = 0;
 
 /**
  * Film the model itself just opened and the mini-player is now playing
@@ -970,7 +1001,7 @@ async function runTool(
         // TITLE's coordinates — clicking near the rating badge lands on the
         // neighbouring poster (the 8.7-film-instead-of-9.1 bug).
         const rating = words.find(
-          (w) => RATING_RE.test(w.text) && w.confidence >= 0.5,
+          (w) => RATING_RE.test(w.text) && w.confidence >= MIN_CONFIDENCE,
         );
         // Page classification lives in src/tencent.ts (pure, regression-
         // tested) — see detectPage for the per-session rule provenance.
@@ -1002,7 +1033,7 @@ async function runTool(
             `「${p.title}」评分 ${p.score} 分${p.verified ? "（详情页已复核）" : ""} → 点片名坐标 (${p.x}, ${p.y})`,
           );
         }
-        pairs = [...new Set(pairs)].slice(0, 6);
+        pairs = [...new Set(pairs)].slice(0, MAX_PAIR_HINTS);
         // Tell the model why a rated card may be missing from the pairs —
         // it is a watched film, not an OCR miss.
         const seenOnScreen = seenTitles.filter((s) =>
@@ -1044,11 +1075,21 @@ async function runTool(
         // Quality hint: many low-confidence / garbled words usually mean the
         // page is mid-transition (loading, animation, overlay) — telling the
         // model to re-scan after a beat instead of trusting the noise.
-        const lowConf = words.filter((w) => w.confidence < 0.5).length;
-        const qualityNote =
-          words.length > 3 && (lowConf / words.length > 0.5 || lowConf >= 10)
-            ? "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面；若连续多次乱码，检查窗口是否被遮挡/未最大化（move_window maximize）或目标应用是否在前台。"
-            : "";
+        // Gated: two CONSECUTIVE low-quality reads, then at most once per 3
+        // OCRs — a loading frame alone would otherwise spam every read.
+        const lowConf = words.filter((w) => w.confidence < MIN_CONFIDENCE).length;
+        const lowConfRatio = words.length > 3 && (lowConf / words.length > 0.5 || lowConf >= 10);
+        ocrSinceQualityNote += 1;
+        let qualityNote = "";
+        if (lowConfRatio) {
+          qualityStreak += 1;
+          if (qualityStreak >= 2 && ocrSinceQualityNote >= 3) {
+            qualityNote = "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面；若连续多次乱码，检查窗口是否被遮挡/未最大化（move_window maximize）或目标应用是否在前台。";
+            ocrSinceQualityNote = 0;
+          }
+        } else {
+          qualityStreak = 0;
+        }
         // Detail-page play guidance: self-drawn players (Tencent Video etc.)
         // render the play control as an unlabeled image button the OCR can't
         // name — tell the model where to look / how to fall back to keyboard.
@@ -1115,16 +1156,16 @@ async function runTool(
         // The strip's state word OCRs as noise (播放片/播放F/播放日/放中),
         // so any 第N话/集 marker at y<140 flags the mini-player too, even
         // without a readable 「播放中」.
-        const topEpi = words.find((w) => w.y < 150 && /第\d+[话集]/.test(w.text));
+        const topEpi = words.find((w) => w.y < MINI_STRIP_Y && /第\d+[话集]/.test(w.text));
         // The strip's play glyph OCRs as II/I1/口 followed by the film title
         // with no readable state word at all (13:28 session: 「II •E让眼泪
         // 变珍王」= a resumed 心动的信号). Any such marker at y<140 is the
         // mini-player, even without 播放中 or 第N话.
         const topPlayer = words.find(
-          (w) => w.y < 150 && /^(II|I1|口)[^，。]{2,}/.test(w.text),
+          (w) => w.y < MINI_STRIP_Y && /^(II|I1|口)[^，。]{2,}/.test(w.text),
         );
         const miniPlayer =
-          topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < 150);
+          topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < MINI_STRIP_Y);
         // The resumed mini-player is a film the user recently watched — keep
         // its title so the pairing / detail guards never offer it again
         // (13:47 session: 「II 口播放中 扒特务」= 抓特务, yet the model kept
@@ -1151,11 +1192,11 @@ async function runTool(
               // the same film are blocked.
               miniPlaying = raw;
               miniPlayingTitle = raw;
-              if (!seenTitles.some((s) => s === raw)) seenTitles.push(raw);
+              rememberSeen(raw);
             } else {
               miniSeenTitle = raw;
               miniPlayingTitle = "";
-              if (!seenTitles.some((s) => s === raw)) seenTitles.push(raw);
+              rememberSeen(raw);
             }
           } else {
             miniPlayingTitle = "";
@@ -1617,7 +1658,7 @@ async function runTool(
           // was on screen and flailed on the sort tabs).
           pairNote =
             "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。";
-        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < 150 && Math.round(x) >= 400) {
+        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < MINI_STRIP_Y && Math.round(x) >= 400) {
           // Top strip (hot-list / 片库 / search) — unrelated to the rating
           // task; clicking a hot entry opens/plays that title (16:43 session
           // tapped (2426,87) on the 心动的信号9 hot entry). Soft-flag.
@@ -1675,7 +1716,7 @@ async function runTool(
         } else if (lastOcrChannelHome && !lastOcrDetail && !lastOcrPlayer) {
           pairNote =
             "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。";
-        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < 150 && Math.round(x) >= 400) {
+        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < MINI_STRIP_Y && Math.round(x) >= 400) {
           pairNote =
             "\n⚠️ 顶部 y<150 是热搜榜/片库/搜索条：点热搜条目会打开（可能直接播放）该片，与评分任务无关。回列表滚动读评分挑 ≥9 候选，不要点顶部条目。";
         } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) > 280 && Math.round(x) >= 300) {
