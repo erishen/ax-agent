@@ -975,6 +975,11 @@ async function runTool(
         // high-score candidate pool. Suppress pairing so the model is not
         // steered into clicking a watched film, and warn explicitly.
         const watchedPage = /观看至\s*\d+\s*%|已看完|继续观看/.test(joined);
+        // Detail-page markers (declared before pairing: a detail title sits
+        // above its rating with dx≈109, while neighbouring list cards are
+        // dx≈200 apart — pairing rules differ between the two).
+        const detailPage = /简介[＞>〉]|选集|播放列表/.test(joined);
+        lastOcrDetail = detailPage;
         // Home / navigation page: no list markers (back, sort tabs), no
         // detail markers, no player markers, but carrying the 你正在追 nav
         // word. The home page ALSO shows rated recommendation cards
@@ -1009,11 +1014,22 @@ async function runTool(
                   !/\s/.test(t.text) &&
                   // Episode/series labels (第二部/第3集) are episode chips,
                   // not titles (14:05 session: 「第二部」 scored 9.4).
-                  !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text),
+                  !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text) &&
+                  // List pages: rating badges sit directly below their own
+                  // card's title (dx < 100; columns are ~200px apart), so a
+                  // title paired with a rating from a NEIGHBOURING card is a
+                  // mis-pair — the rating belongs to the next film (16:51
+                  // session: 我看见两朵一样的云 9.0, 红海行动 9.8, 等风来
+                  // 9.1 were all real ratings of adjacent cards; the films
+                  // are ~8.3). Detail pages pair differently (title above
+                  // rating, dx≈109), so the hard dx bound applies on lists
+                  // only; detail pairs are still used for mini-player
+                  // matching after a card click.
+                  (detailPage || Math.abs(cx(t) - cx(r)) < 100),
               )
               .map((t) => ({ t, d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y) }))
               .sort((a, b) => a.d - b.d)[0];
-            if (title && title.d < 150) {
+            if (title && title.d < (detailPage ? 220 : 150)) {
               const t = title.t.text.trim();
               // The user already watched this film (mini-player resume,
               // 你正在追 history): it must not be offered as the pick.
@@ -1109,8 +1125,6 @@ async function runTool(
         // below the 9.0 bar, say so loudly — the agent otherwise keeps
         // fiddling with a film it must not play (13:22 session: opened the
         // wrong 8.1 detail after a stale-coordinate click and never noticed).
-        const detailPage = /简介[＞>〉]|选集|播放列表/.test(joined);
-        lastOcrDetail = detailPage;
         const ratingNum = rating ? parseFloat(rating.text) : NaN;
         const ratingGuard =
           detailPage && rating && !Number.isNaN(ratingNum) && ratingNum < 9
@@ -1196,7 +1210,7 @@ async function runTool(
           }
         }
         const miniHint = miniPlaying
-          ? `\n（顶部小窗正在播放「${miniPlaying}」——这就是你刚点开的候选片，任务播放【已开始】：按规则确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报，【不要再点击它】——重复点击卡片会把它重新播放一遍（13:55 会话把同一部片播放了两遍））`
+          ? `\n（顶部小窗正在播放「${miniPlaying}」——这就是你刚点开的候选片，任务播放【已开始】：按规则确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报，【不要再点击它】——重复点击卡片会把它重新播放一遍（13:55 会话把同一部片播放了两遍）。注意：它的评分来自列表徽标配对，【未经详情页复核】——如果用户指出分数不对（如实际只有 8.x），说明配对评分错了（评分徽标错配到相邻卡片），此片不达标：不要 done，按 esc 返回列表重新 ocr 挑片）`
           : `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成${miniSeenTitle ? `。另外：小窗里这部（${miniSeenTitle}）是你之前看过的片，任务推荐应排除它——不要在列表里再找它/点它` : ""}）`;
         const playingHint = miniPlayer
           ? miniHint
