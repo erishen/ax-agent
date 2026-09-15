@@ -111,7 +111,10 @@ const APP_BLOCKLIST = new Set([
   "photo booth",
   // Self-drawn UIs (no semantic AX labels): generic templates fail on them.
   // Tencent Video ships as QQLive.app; both bundle-name spellings appear in
-  // the scan across locales.
+  // the scan across locales. The blocklist only gates the installed-app
+  // template pool — hand-written tasks (PINNED_AGENT below, apps.local.json
+  // extra_tasks) run the OCR path and are NOT affected, so Tencent Video
+  // still gets its curated OCR-based tasks.
   "qqlive",
   "tenvideo",
 ]);
@@ -161,6 +164,29 @@ const BUILTIN_AGENT: ExampleTask[] = [
     task:
       "分别打开 TextEdit 和备忘录，各读一遍界面，对比两者在「快速记一条笔记」" +
       "场景下的优劣（步骤数、可操作元素），给出推荐结论",
+    source: "builtin",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Pinned tasks that are ALWAYS the first chips (user's own curated tasks).
+// Hand-written tasks bypass APP_BLOCKLIST — they are authored for the target
+// app's real capabilities (self-drawn UIs run the OCR path).
+// ---------------------------------------------------------------------------
+
+const PINNED_AGENT: ExampleTask[] = [
+  {
+    label: "🎬 腾讯视频按喜好推片",
+    task:
+      "打开腾讯视频。腾讯视频是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主：" +
+      "先了解我的画像，用 profile_search 查询「职业经历 年龄 人格特点」" +
+      "（注意：我的资料库没有现成的观影偏好，拿到画像特征后据此推断我可能喜欢的题材，" +
+      "例如 （画像推断题材：高质感剧情/悬疑推理/职场现实或解压治愈类））。" +
+      "再用 ocr 读腾讯视频首页的「你正在追」和热搜榜，看平台行为信号。结合画像推断与平台信号，" +
+      "进入「电影」频道，逐个浏览影片评分，挑一部评分 9 分以上、且题材和画像推断口味最接近的电影" +
+      "（详情页 ocr 复核评分与题材都符合），点击播放并确认画面真的在播放" +
+      "（ocr 看到「播放中」或播放器控件出现）。" +
+      "最后把片名、评分、以及推荐理由（基于我的什么画像特征推断）一起报告给我",
     source: "builtin",
   },
 ];
@@ -382,11 +408,11 @@ export async function exampleBatch(): Promise<ExampleTask[]> {
   const rotating = BUILTIN_AGENT[builtinCursor % BUILTIN_AGENT.length];
   builtinCursor += 1;
 
-  // One fixed builtin slot + app/gateway/local tasks for the rest.
-  const need = BATCH - 1;
+  // Pinned (curated) tasks go to the very front of every batch, in order.
+  const need = BATCH - PINNED_AGENT.length - 1;
   const tail: ExampleTask[] =
     tailPool.length >= need
       ? tailPool.slice(0, need)
       : tailPool;
-  return [rotating, ...tail];
+  return [...PINNED_AGENT, rotating, ...tail];
 }
