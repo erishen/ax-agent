@@ -12,6 +12,18 @@ import type { OcrScreenWord } from "./types";
 export const NAV_RE =
   /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
 export const RATING_RE = /^(\d[.:]\d)(分)?$/;
+
+/** Extract a rating from badge OCR text, tolerating noise prefixes like
+ *  白9.3分 (the channel-home hero badge reads its star icon as 白/★).
+ *  Loose matching is bounded by length so player timestamps
+ *  (Q:9:99209 / 0:9899209 — 19:34 session) never qualify. Returns the
+ *  bare "9.3" form or null. */
+export function ratingText(text: string): string | null {
+  const m = text.match(/^\D*(\d[.:]\d)(分)?\D*$/);
+  if (!m) return null;
+  if (text.length > 6) return null;
+  return m[1];
+}
 const TITLE_CHARS = /^[\u4e00-\u9fa5《》·\s0-9A-Za-z]+$/;
 
 /** True when the two strings share any 2-char substring (used to match a
@@ -145,7 +157,7 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
     if (opts.lastOcrChannelHome && !opts.lastOcrDetail && !opts.lastOcrPlayer) {
       return {
         note:
-          "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。",
+          "\n⚠️ 当前是频道首页（热播榜大卡）：大卡评分真实（可作候选提示），但点大卡会【直接播放】未经复核的片。正确路径：① 若配对清单里有候选片名，点它的片名坐标进详情页，复核评分与题材后再点播放；② 若无候选或想浏览更多，向下滚动进入列表页（出现「最热/高分好评」筛选栏）再选片。不要在频道首页点非片名区域。",
         setSortVerify: false,
       };
     }
@@ -157,9 +169,15 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
       };
     }
     if (!opts.lastOcrDetail && !opts.lastOcrPlayer && y > 280 && x >= 300) {
+      // Nav-home / navigation page with NO rating pairs: the card area
+      // plays arbitrary content on click (16:33 心动的信号9; 19:34 the
+      // model clicked the card zone 3× after the warn-only hint). Warn was
+      // not enough — refuse to fire, steer to the left nav instead.
       return {
-        note:
-          "\n⚠️ 当前屏幕没有评分候选配对（首页/导航页）：腾讯视频首页的「你正在追」/热搜/推荐卡片点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。先点左侧导航「电影」（x≈200, y≈370）进入评分列表，再按配对坐标点片名；不要在首页点卡片。",
+        blocked:
+          `⛔ 当前是首页/导航页（本屏无评分候选）：${verb} (${x}, ${y}) 落在推荐卡片区，点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。` +
+          "不要点首页卡片。正确路径：点左侧导航「电影」（x≈200, y≈370）进入频道列表，滚动读评分挑 ≥9 候选，进详情页复核评分与题材后再点播放。",
+        note: "",
         setSortVerify: false,
       };
     }
@@ -220,12 +238,13 @@ export function buildPairs(
   const seen = opts.seenTitles;
   const out: PairCandidate[] = [];
   for (const r of words) {
-    if (!RATING_RE.test(r.text) || r.confidence < MIN_CONFIDENCE) continue;
+    const rScore = ratingText(r.text);
+    if (!rScore || r.confidence < MIN_CONFIDENCE) continue;
     const title = words
       .filter(
         (t) =>
           t !== r &&
-          !RATING_RE.test(t.text) &&
+          ratingText(t.text) === null &&
           t.confidence >= MIN_CONFIDENCE &&
           t.text.length >= 2 &&
           TITLE_CHARS.test(t.text) &&
@@ -260,7 +279,7 @@ export function buildPairs(
       const verified = opts.verifiedScores?.get(t);
       out.push({
         title: t,
-        score: verified ?? r.text.replace("分", ""),
+        score: verified ?? rScore,
         x: Math.round(title.t.x + title.t.w / 2),
         y: Math.round(title.t.y + title.t.h / 2),
         verified: verified !== undefined,

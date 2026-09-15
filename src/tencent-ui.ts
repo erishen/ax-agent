@@ -17,7 +17,7 @@ import {
   MAX_PAIR_HINTS,
   MIN_CONFIDENCE,
   MINI_STRIP_Y,
-  RATING_RE,
+  ratingText,
   buildClickGuard,
   buildPairs,
   detectPage,
@@ -183,7 +183,7 @@ export class TencentUiState {
       )
       .join("\n");
     const rating = words.find(
-      (w) => RATING_RE.test(w.text) && w.confidence >= MIN_CONFIDENCE,
+      (w) => ratingText(w.text) !== null && w.confidence >= MIN_CONFIDENCE,
     );
     // Page classification lives in src/tencent.ts (pure, regression-
     // tested) — see detectPage for the per-session rule provenance.

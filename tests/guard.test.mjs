@@ -129,11 +129,26 @@ test("guard: top strip click (y<150, x≥400) → hot-list warning (16:43 sessio
   assert.match(r.note, /顶部 y<150 是热搜榜/);
 });
 
-test("guard: nav-home click (no pairs, y>280, x≥300) → card-plays warning (16:33 session)", () => {
+test("guard: nav-home card-zone click (no pairs, y>280, x≥300) → HARD BLOCK (16:33 + 19:34 sessions)", () => {
+  // 19:34: the model clicked the home card zone 3× after a warn-only hint —
+  // a warning was not enough; the click must not fire at all.
   const r = buildClickGuard({
     ...base,
     x: 646,
     y: 747,
   });
-  assert.match(r.note, /首页\/导航页/);
+  assert.ok(r.blocked, "must be blocked, not warned");
+  assert.match(r.blocked, /首页\/导航页/);
+  assert.match(r.blocked, /不要点首页卡片/);
+  assert.match(r.blocked, /左侧导航「电影」/);
+});
+
+test("guard: nav-home LEFT NAV click (x<250) still allowed (电影 entry)", () => {
+  const r = buildClickGuard({
+    ...base,
+    x: 200,
+    y: 370,
+  });
+  assert.equal(r.blocked, undefined);
+  assert.equal(r.note, "");
 });

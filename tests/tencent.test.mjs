@@ -305,3 +305,54 @@ test("sharesBigram: mini strip matches candidate title", () => {
   assert.equal(sharesBigram("红海行动", "等风来"), false);
   assert.equal(sharesBigram("仙", "仙逆"), false, "single char never matches");
 });
+
+// ------------------------------------------------- ratingText (19:34 session:
+// channel-home hero badge OCRs as 白9.3分 — the star icon reads as 白; the
+// old exact RATING_RE dropped it, so a 9.3 candidate vanished from the pairs)
+
+import { ratingText } from "../src/tencent.ts";
+
+test("ratingText: tolerates OCR noise prefixes on badges", () => {
+  assert.equal(ratingText("白9.3分"), "9.3");
+  assert.equal(ratingText("白8.3分"), "8.3");
+  assert.equal(ratingText("9.3分"), "9.3");
+  assert.equal(ratingText("9:0"), "9:0");
+  assert.equal(ratingText("9.0"), "9.0");
+});
+
+test("ratingText: player timestamps never qualify (length bound)", () => {
+  assert.equal(ratingText("Q:9:99209"), null);
+  assert.equal(ratingText("0:9899209"), null);
+  assert.equal(ratingText("2025"), null);
+  assert.equal(ratingText("9"), null);
+});
+
+test("buildPairs: list badge with 白 noise prefix still pairs (19:34 OCR form)", () => {
+  // The 19:34 session read the channel-home hero badge as 白9.3分 (star icon
+  // → 白). On a LIST page the same noise would have silently dropped a real
+  // candidate under the old exact RATING_RE — the loose form must pair.
+  const words = [
+    W("〈返回", 321, 181, 41, 17),
+    W("出入平安", 900, 340, 61, 17),
+    W("白9.1分", 920, 370, 20, 15),
+    W("抓特务", 500, 340, 47, 17),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(
+    pairs.map((p) => [p.title, p.score]),
+    [["出入平安", "9.1"]],
+  );
+});
+
+test("detectPage: channel-home hero badge with 白 prefix stays channelHome (19:34)", () => {
+  // The hero badge noise must not leak into classification: 热播榜 still
+  // wins → channelHome (not the suppress-everything homeLike).
+  const words = [
+    W("电影热播榜第1名", 360, 424, 127, 19),
+    W("白9.3分", 501, 426, 57, 17),
+    W("你正在追", 216, 254, 59, 15),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, true);
+  assert.equal(f.homeLike, false);
+});
