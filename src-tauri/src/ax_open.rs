@@ -24,7 +24,8 @@ pub fn open_application(target: &str) -> Result<AxAppInfo, String> {
     // Already running? Re-activate (and unhide) it. Match by bundle id first
     // (locale-proof: TextEdit runs as 文本编辑 on a zh-CN system, so a name
     // needle "textedit" only matches on English-locale machines).
-    let running = if let Some(hit) = find_installed(&needle) {
+    let installed = find_installed(&needle);
+    let running = if let Some(hit) = &installed {
         find_running_by_bundle(&hit.bundle_id)
     } else {
         find_running_by_name(&needle)
@@ -66,7 +67,7 @@ pub fn open_application(target: &str) -> Result<AxAppInfo, String> {
     // `open -b com.apple.Notes` always works.
     let mut bundle_id = String::new();
     let mut display = target.trim().to_string();
-    if let Some(hit) = find_installed(&needle) {
+    if let Some(hit) = &installed {
         bundle_id = hit.bundle_id.clone();
         display = hit.bundle_name.clone();
     }
@@ -83,11 +84,19 @@ pub fn open_application(target: &str) -> Result<AxAppInfo, String> {
         return Err(format!("找不到或无法启动应用「{target}」"));
     }
 
-    // Poll accepting bundle id (primary — locale-proof), then name forms.
-    // Cold launches can take 10s+ to show up in runningApplications (QQLive,
+    // Poll accepting pid via the main-binary path probe (primary — works the
+    // moment the process forks; `open` registers with LaunchServices
+    // asynchronously and `runningApplications` can serve a stale snapshot
+    // from before registration in non-runloop contexts), then bundle id,
+    // then name forms. Cold launches can take 10s+ to show a window (QQLive,
     // Electron apps) — poll ~15s before giving up.
     for _ in 0..100 {
         std::thread::sleep(std::time::Duration::from_millis(150));
+        if let Some(hit) = &installed {
+            if let Some(info) = find_running_by_main_binary(hit) {
+                return Ok(info);
+            }
+        }
         if !bundle_id.is_empty() {
             if let Some(info) = find_running_by_bundle(&bundle_id) {
                 return Ok(info);
@@ -124,9 +133,16 @@ fn name_matches(a: &crate::ax_core::InstalledApp, needle: &str) -> bool {
 }
 
 /// Marketing-name aliases for apps whose macOS name/bundle differs from what
-/// users call them (Tencent Video ships as QQLive.app). Key is the Chinese
-/// phrase, value is the lowercased bundle name it resolves to.
-const CONSUMER_ALIASES: &[(&str, &str)] = &[("腾讯视频", "qqlive")];
+/// users call them (Tencent Video ships as QQLive.app; NetEase CloudMusic
+/// ships as NeteaseMusic.app with NO CFBundleDisplayName, so the installed-
+/// apps scan reports the English bundle name and `open -a 网易云音乐` fails).
+/// Key is the Chinese phrase, value is the lowercased bundle name it
+/// resolves to.
+const CONSUMER_ALIASES: &[(&str, &str)] = &[
+    ("腾讯视频", "qqlive"),
+    ("网易云音乐", "neteasemusic"),
+    ("网易云", "neteasemusic"),
+];
 
 /// Map a Chinese marketing name to the canonical bundle name.
 fn alias_bundle(needle: &str) -> Option<String> {
@@ -185,6 +201,41 @@ fn find_running_by_bundle(bundle_id: &str) -> Option<AxAppInfo> {
     None
 }
 
+/// Fallback process-table probe for apps `runningApplications` has not
+/// surfaced yet. `open` registers the pid with LaunchServices asynchronously;
+/// in non-runloop contexts (Rust tests, off-main-thread callers) the
+/// NSWorkspace snapshot can stay stale for many seconds even though the
+/// process forked immediately. Matching the exact main binary path is
+/// registration-independent and anchors to the end so helper processes
+/// ("NeteaseMusic Helper", ...) never match.
+fn find_running_by_main_binary(app: &crate::ax_core::InstalledApp) -> Option<AxAppInfo> {
+    let exe = format!(
+        "{}/Contents/MacOS/{}",
+        app.path.trim_end_matches('/'),
+        app.bundle_name
+    );
+    let out = std::process::Command::new("pgrep")
+        .args(["-f", &format!("{exe}$")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None; // pgrep exit 1 = no match
+    }
+    let pid = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .parse::<i32>()
+        .ok()?;
+    Some(AxAppInfo {
+        pid,
+        name: app.bundle_name.clone(),
+        bundle_id: app.bundle_id.clone(),
+        is_active: false,
+        is_hidden: false,
+    })
+}
+
 /// Bring the app with `pid` to the front. Returns fresh info, or `None` when
 /// the app vanished in the meantime.
 fn activate(pid: i32) -> Option<AxAppInfo> {
@@ -215,5 +266,22 @@ unsafe fn app_info(app: &NSRunningApplication, pid: i32) -> AxAppInfo {
             .unwrap_or_default(),
         is_active: app.isActive(),
         is_hidden: app.isHidden(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consumer_aliases_resolve_chinese_marketing_names() {
+        assert_eq!(alias_bundle("腾讯视频").as_deref(), Some("qqlive"));
+        assert_eq!(alias_bundle("网易云音乐").as_deref(), Some("neteasemusic"));
+        assert_eq!(alias_bundle("网易云").as_deref(), Some("neteasemusic"));
+        // prefix form: a phrase starting with the marketing name also resolves
+        assert_eq!(alias_bundle("网易云音乐").as_deref(), Some("neteasemusic"));
+        // unknown phrases resolve to nothing (caller falls back to open -a)
+        assert_eq!(alias_bundle("微信"), None);
+        assert_eq!(alias_bundle(""), None);
     }
 }
