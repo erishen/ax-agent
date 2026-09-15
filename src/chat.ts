@@ -599,6 +599,15 @@ let pendingSortVerify = false;
  */
 let seenTitles: string[] = [];
 
+/**
+ * Film the model itself just opened and the mini-player is now playing
+ * (matched against the rating candidates in the same OCR). Clicking a
+ * Tencent card starts playback directly, so a second click on the same
+ * title re-plays it (13:55 session: 捕风追影 played twice). Updated by
+ * every ocr; non-empty means "do not click this film again".
+ */
+let miniPlayingTitle = "";
+
 /** True when a and b share a ≥2-char run (「抓特务」vs OCR 残字「扒特务」
  * share 「特务」). Used to match film titles across OCR noise. */
 function sharesBigram(a: string, b: string): boolean {
@@ -719,6 +728,7 @@ async function runTool(
         scrollsSinceRating = 0;
         lastOcrList = false;
         pendingSortVerify = false;
+        miniPlayingTitle = "";
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -1088,20 +1098,46 @@ async function runTool(
         // (13:47 session: 「II 口播放中 扒特务」= 抓特务, yet the model kept
         // trying to open it from the list).
         const miniWord = topPlayer ?? pw ?? topEpi;
+        // The mini-player is either the app auto-resuming a previously
+        // closed video (a film the user already watched) OR the task film
+        // the model just opened — clicking a Tencent card directly starts
+        // playback (13:55 session: tapping 捕风追影 played it, yet the
+        // model thought nothing had started and clicked it again, playing
+        // it a second time). Decide by matching the strip's title against
+        // the current rating candidates: a match means the task film is
+        // already playing (playback evidence, NOT a watched film); no
+        // match means an auto-resumed old film (watched, exclude it).
         let miniSeenTitle = "";
+        let miniPlaying = "";
         if (miniWord) {
-          const raw = miniWord.text
+          let raw = miniWord.text
             .replace(/^[I1口]{1,2}\s*/, "")
             .replace(/播放中|正在播放|播放[片日F！]|放中|第\d+[话集期][^，。\s（【]*/g, "")
             .replace(/^\s*口/, "")
             .replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, "")
+            .replace(/(国语|普通话|粤语|原声|普通|英文|双语|高清|蓝光|话版)+$/g, "")
             .trim();
           if (raw.length >= 2) {
-            miniSeenTitle = raw;
-            if (!seenTitles.some((s) => s === raw)) seenTitles.push(raw);
+            const isTaskFilm = lastListPairs.some((p) => sharesBigram(p.title, raw));
+            if (isTaskFilm) {
+              // The strip is playing a candidate the model just clicked:
+              // that IS the task playback. Remember it so repeat clicks on
+              // the same film are blocked.
+              miniPlaying = raw;
+              miniPlayingTitle = raw;
+              if (!seenTitles.some((s) => s === raw)) seenTitles.push(raw);
+            } else {
+              miniSeenTitle = raw;
+              miniPlayingTitle = "";
+              if (!seenTitles.some((s) => s === raw)) seenTitles.push(raw);
+            }
+          } else {
+            miniPlayingTitle = "";
           }
         }
-        const miniHint = `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成${miniSeenTitle ? `。另外：小窗里这部（${miniSeenTitle}）是你之前看过的片，任务推荐应排除它——不要在列表里再找它/点它` : ""}）`;
+        const miniHint = miniPlaying
+          ? `\n（顶部小窗正在播放「${miniPlaying}」——这就是你刚点开的候选片，任务播放【已开始】：按规则确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报，【不要再点击它】——重复点击卡片会把它重新播放一遍（13:55 会话把同一部片播放了两遍））`
+          : `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成${miniSeenTitle ? `。另外：小窗里这部（${miniSeenTitle}）是你之前看过的片，任务推荐应排除它——不要在列表里再找它/点它` : ""}）`;
         const playingHint = miniPlayer
           ? miniHint
           : playing
@@ -1518,7 +1554,10 @@ async function runTool(
           const nearest = lastListPairs
             .map((p) => ({ p, d: Math.hypot(px - p.x, py - p.y) }))
             .sort((a, b) => a.d - b.d)[0];
-          if (onTitle) {
+          // 该片已在顶部小窗播放中（刚点开的任务片）：再点会重新播放一遍，拦截。
+          if (onTitle && miniPlayingTitle && sharesBigram(onTitle.title, miniPlayingTitle)) {
+            pairNote = `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`;
+          } else if (onTitle) {
             pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
@@ -1559,7 +1598,10 @@ async function runTool(
           const nearest = lastListPairs
             .map((p) => ({ p, d: Math.hypot(px - p.x, py - p.y) }))
             .sort((a, b) => a.d - b.d)[0];
-          if (onTitle) {
+          // 该片已在顶部小窗播放中（刚点开的任务片）：再点会重新播放一遍，拦截。
+          if (onTitle && miniPlayingTitle && sharesBigram(onTitle.title, miniPlayingTitle)) {
+            pairNote = `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`;
+          } else if (onTitle) {
             pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
