@@ -566,6 +566,14 @@ let elementAtFails = 0;
 let lastListPairs: Array<{ title: string; score: string; x: number; y: number }> = [];
 
 /**
+ * List-page OCRs in a row without a high-confidence rating digit. The model
+ * tends to keep scrolling a 「最热/最新」-sorted list looking for rating
+ * badges that the sort simply does not show; after two scrolls the listHint
+ * escalates from "scroll more" to "switch to 高分好评 or open a detail".
+ */
+let scrollsSinceRating = 0;
+
+/**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
  * desktop when the model guesses out-of-window coordinates. Returns the
@@ -661,6 +669,7 @@ async function runTool(
         state = { ...state, pid: app.pid, appName: app.name, outline };
         elementAtFails = 0; // new target app → re-arm element_at probes
         lastListPairs = []; // stale rating pairs from the previous app
+        scrollsSinceRating = 0;
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -958,8 +967,19 @@ async function runTool(
           /〈返回|‹返回|←返回|<返回|›返回/.test(joined) &&
           !/\d+\.\d/.test(joined) &&
           !playing;
+        // Track consecutive rating-less list OCRs so the hint can escalate
+        // from "scroll another screen" to "switch sort / open a detail".
+        if (rating) {
+          scrollsSinceRating = 0;
+        } else if (listPage) {
+          scrollsSinceRating += 1;
+        }
         const listHint = listPage
-          ? "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
+          ? /最热/.test(joined) && /院线电影|电影•|电视剧•|综艺•/.test(joined)
+            ? "\n（当前是最热排序列表（如「电影•最热•院线电影」），卡片不显示评分徽标——继续滚动也读不到分。直接点顶部「高分好评」标签切换排序（ocr 中有其坐标），或点开候选片详情页用详情页评分筛选）"
+            : scrollsSinceRating >= 2
+              ? `\n（已连续 ${scrollsSinceRating} 次列表页未见评分数字：当前多半是「最热/最新」排序，卡片不显示评分徽标，继续滚动也读不到分。改切「高分好评」排序（ocr 顶部筛选栏该标签坐标），或直接点开候选片详情页用详情页评分筛选；不要继续在同一列表里盲目滚动）`
+              : "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
           : "";
         return {
           result:
@@ -1319,6 +1339,12 @@ async function runTool(
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
+        } else if (Math.round(y) <= 280 && Math.round(x) >= 230) {
+          // No rating pairs on screen (rating-less list): a click in the
+          // top filter/sort band is probably a sort tab. Sorting switches
+          // (最热/高分好评/类型) can be slow or fail silently — verify.
+          pairNote =
+            "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
         }
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
@@ -1352,6 +1378,9 @@ async function runTool(
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
+        } else if (Math.round(y) <= 280 && Math.round(x) >= 230) {
+          pairNote =
+            "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
         }
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
