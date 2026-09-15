@@ -589,6 +589,28 @@ let lastOcrList = false;
  */
 let pendingSortVerify = false;
 
+/**
+ * Titles the user has already watched — observed from the top mini-player
+ * (the app auto-resumes a previously closed video, e.g. 「播放中 扒特务」
+ * = 抓特务) and from the 你正在追 history page. Recommending a film the
+ * user has finished defeats the task ("没有排除我已经完整看过的吧"),
+ * so paired candidates that overlap a seen title are suppressed. Kept
+ * across open_app: watched films stay watched.
+ */
+let seenTitles: string[] = [];
+
+/** True when a and b share a ≥2-char run (「抓特务」vs OCR 残字「扒特务」
+ * share 「特务」). Used to match film titles across OCR noise. */
+function sharesBigram(a: string, b: string): boolean {
+  const short = a.length <= b.length ? a : b;
+  const long = a.length <= b.length ? b : a;
+  if (short.length < 2) return false;
+  for (let i = 0; i + 2 <= short.length; i++) {
+    if (long.includes(short.slice(i, i + 2))) return true;
+  }
+  return false;
+}
+
 /** One-shot reminder consumed by the next non-ocr action (scroll/click/
  * key): "you just tapped a sort tab, verify it took effect before acting
  * again". Returns "" when nothing is pending. */
@@ -924,15 +946,27 @@ async function runTool(
               .map((t) => ({ t, d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y) }))
               .sort((a, b) => a.d - b.d)[0];
             if (title && title.d < 150) {
+              const t = title.t.text.trim();
+              // The user already watched this film (mini-player resume,
+              // 你正在追 history): it must not be offered as the pick.
+              if (seenTitles.some((s) => sharesBigram(t, s))) continue;
               const score = r.text.replace("分", "");
               const tx = Math.round(title.t.x + title.t.w / 2);
               const ty = Math.round(title.t.y + title.t.h / 2);
-              lastListPairs.push({ title: title.t.text.trim(), score, x: tx, y: ty });
-              pairs.push(`「${title.t.text.trim()}」评分 ${score} 分 → 点片名坐标 (${tx}, ${ty})`);
+              lastListPairs.push({ title: t, score, x: tx, y: ty });
+              pairs.push(`「${t}」评分 ${score} 分 → 点片名坐标 (${tx}, ${ty})`);
             }
           }
           pairs = [...new Set(pairs)].slice(0, 6);
         }
+        // Tell the model why a rated card may be missing from the pairs —
+        // it is a watched film, not an OCR miss.
+        const seenOnScreen = seenTitles.filter((s) =>
+          words.some((w) => w.text.length >= 2 && sharesBigram(w.text, s)),
+        );
+        const seenHint = seenOnScreen.length
+          ? `\n（已从候选配对中排除你看过的片：${[...new Set(seenOnScreen)].join("、")}——它们不会作为推荐候选；列表里它们的评分/海报可以忽略）`
+          : "";
         // Playback evidence must be scoped. 「播放中」appears in two very
         // different places:
         //  1) a player page — real task evidence → done;
@@ -1012,6 +1046,14 @@ async function runTool(
           detailPage && rating && !Number.isNaN(ratingNum) && ratingNum < 9
             ? `\n（当前详情页评分 ${rating.text.replace("分", "")} 分 < 9，【不达标】：不要点播放/立即播放。按 esc 返回列表（返回后 ocr 确认回到列表），重新挑选评分 ≥9 的候选片；本页的推荐/选集/播放列表都是这个低分片的周边内容，不要继续操作）`
             : "";
+        // A detail page for a film the user already watched (mini-player
+        // resume / 你正在追): even at 9+, it is not a valid recommendation.
+        const seenOnDetail = detailPage
+          ? seenTitles.find((s) => words.some((w) => w.text.length >= 2 && sharesBigram(w.text, s)))
+          : undefined;
+        const seenDetailHint = seenOnDetail
+          ? `\n（⚠️ 当前详情页这部片（${seenOnDetail}）是你之前看过的：不要把它作为任务推荐片。即使评分 ≥9 也不要点播放——按 esc 返回列表，换一部没看过的片）`
+          : "";
         // Channel home / list hero cards also show rating + 立即播放, but
         // they are NOT a detail page and the hero card auto-rotates — the
         // button belongs to whichever card is shown at click time (13:28
@@ -1041,7 +1083,25 @@ async function runTool(
         );
         const miniPlayer =
           topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < 150);
-        const miniHint = `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成）`;
+        // The resumed mini-player is a film the user recently watched — keep
+        // its title so the pairing / detail guards never offer it again
+        // (13:47 session: 「II 口播放中 扒特务」= 抓特务, yet the model kept
+        // trying to open it from the list).
+        const miniWord = topPlayer ?? pw ?? topEpi;
+        let miniSeenTitle = "";
+        if (miniWord) {
+          const raw = miniWord.text
+            .replace(/^[I1口]{1,2}\s*/, "")
+            .replace(/播放中|正在播放|播放[片日F！]|放中|第\d+[话集期][^，。\s（【]*/g, "")
+            .replace(/^\s*口/, "")
+            .replace(/[^\u4e00-\u9fa5A-Za-z0-9]/g, "")
+            .trim();
+          if (raw.length >= 2) {
+            miniSeenTitle = raw;
+            if (!seenTitles.some((s) => s === raw)) seenTitles.push(raw);
+          }
+        }
+        const miniHint = `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成${miniSeenTitle ? `。另外：小窗里这部（${miniSeenTitle}）是你之前看过的片，任务推荐应排除它——不要在列表里再找它/点它` : ""}）`;
         const playingHint = miniPlayer
           ? miniHint
           : playing
@@ -1091,8 +1151,10 @@ async function runTool(
             dialogHint +
             watchedHint +
             ratingGuard +
+            seenDetailHint +
             heroHint +
             listHint +
+            seenHint +
             qualityNote,
           state,
         };
