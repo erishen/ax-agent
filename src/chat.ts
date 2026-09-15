@@ -1098,6 +1098,8 @@ async function runTool(
       case "screen_info":
       case "frontmost_app":
       case "profile_search":
+      case "fs_scan":
+      case "fs_move":
         return { result: await desktopToolExec(name, args), state };
       // --- 本地 MCP 服务器（mcp.local.json，tsm-hub 未挂载的）---
       default:

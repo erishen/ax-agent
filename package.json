@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/tencent.test.mjs tests/guard.test.mjs tests/tencent-ui.test.mjs tests/tool-utils.test.mjs tests/agent-config.test.mjs tests/tree-utils.test.mjs"
+    "test": "node --experimental-strip-types --test tests/tencent.test.mjs tests/guard.test.mjs tests/tencent-ui.test.mjs tests/tool-utils.test.mjs tests/agent-config.test.mjs tests/tree-utils.test.mjs tests/finder-archive.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

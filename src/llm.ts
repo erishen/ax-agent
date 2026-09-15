@@ -156,6 +156,42 @@ export const DESKTOP_TOOLS: Array<{ name: string; description: string; parameter
       ["query"],
     ),
   },
+  {
+    name: "fs_scan",
+    description:
+      "扫描目录列出文件与子目录（名称/扩展名/大小/修改时间，JSON 数组，按修改时间倒序）。文件整理前先用它了解全量，max_depth 默认 1（上限 3），limit 默认 500。",
+    parameters: obj(
+      {
+        path: { type: "string", description: "要扫描的目录绝对路径（可用 ~ 开头）" },
+        max_depth: { type: "number", description: "递归深度，默认 1，最大 3" },
+        limit: { type: "number", description: "返回条数上限，默认 500" },
+      },
+      ["path"],
+    ),
+  },
+  {
+    name: "fs_move",
+    description:
+      "批量移动/重命名文件（只移动，永不删除、永不覆盖）。dry_run=true（默认）只校验并报告计划；dry_run=false 才真正移动。目标重名自动加序号。文件归档流程：先 fs_scan 全量了解 → 生成移动计划 → 用 fs_move dry_run 预演并汇报给用户 → 用户确认后再 dry_run=false 执行。",
+    parameters: obj(
+      {
+        moves: {
+          type: "array",
+          description: "移动列表：[{from, to}]，均为绝对路径（可用 ~ 开头）",
+          items: {
+            type: "object",
+            properties: {
+              from: { type: "string" },
+              to: { type: "string" },
+            },
+            required: ["from", "to"],
+          },
+        },
+        dry_run: { type: "boolean", description: "默认 true=只预演不执行；false=真正移动" },
+      },
+      ["moves"],
+    ),
+  },
 ];
 
 /** Cached local MCP tools (mcp.local.json servers), loaded lazily. */
