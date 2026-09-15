@@ -871,7 +871,7 @@ async function runTool(
         // TITLE's coordinates — clicking near the rating badge lands on the
         // neighbouring poster (the 8.7-film-instead-of-9.1 bug).
         const NAV = /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
-        const RATING = /^(\d\.\d)(分)?$/;
+        const RATING = /^(\d[.:]\d)(分)?$/;
         const rating = words.find(
           (w) => RATING.test(w.text) && w.confidence >= 0.5,
         );
@@ -895,7 +895,7 @@ async function runTool(
                   t.confidence >= 0.5 &&
                   t.text.length >= 2 &&
                   /^[\u4e00-\u9fa5《》·\s0-9A-Za-z]+$/.test(t.text) &&
-                  !NAV.test(t.text),
+                  !NAV.test(t.text) && !/月\d+日|定档|上映|巨制|打爆/.test(t.text),
               )
               .map((t) => ({ t, d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y) }))
               .sort((a, b) => a.d - b.d)[0];
@@ -1007,16 +1007,16 @@ async function runTool(
         // The strip's state word OCRs as noise (播放片/播放F/播放日/放中),
         // so any 第N话/集 marker at y<140 flags the mini-player too, even
         // without a readable 「播放中」.
-        const topEpi = words.find((w) => w.y < 140 && /第\d+[话集]/.test(w.text));
+        const topEpi = words.find((w) => w.y < 150 && /第\d+[话集]/.test(w.text));
         // The strip's play glyph OCRs as II/I1/口 followed by the film title
         // with no readable state word at all (13:28 session: 「II •E让眼泪
         // 变珍王」= a resumed 心动的信号). Any such marker at y<140 is the
         // mini-player, even without 播放中 or 第N话.
         const topPlayer = words.find(
-          (w) => w.y < 140 && /^(II|I1|口)[^，。]{2,}/.test(w.text),
+          (w) => w.y < 150 && /^(II|I1|口)[^，。]{2,}/.test(w.text),
         );
         const miniPlayer =
-          topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < 140);
+          topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < 150);
         const miniHint = `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成）`;
         const playingHint = miniPlayer
           ? miniHint
