@@ -6,6 +6,7 @@
 // window-placement math and OCR-quality judgement that had zero test
 // coverage, and the 16:43 session showed a wrong maximize landing layout
 // (all old coords stale) and wait_for false-positives on nav words.
+import { truncate } from "./tree-utils.ts";
 
 /** One NSScreen entry as returned by the `screen_info` desktop tool. */
 export interface ScreenInfo {
@@ -158,4 +159,52 @@ export function parseCommand(input: string): ParsedCommand | null {
   const find = input.match(/^(?:找|搜索|查找|find|search)\s*(.+)$/i);
   if (find) return { kind: "find", keyword: find[1].trim() };
   return null;
+}
+
+// --- Chat text formatting + LLM error mapping (formerly inline in chat.ts,
+// zero coverage). friendlyLlmError is what the user actually reads when a
+// model call fails; the step helpers shape the execution-log bubbles.
+
+/** Normalize an unknown thrown value into a message string. */
+export function asText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Map common LLM failures to actionable Chinese guidance. */
+export function friendlyLlmError(errText: string): string {
+  const t = errText.toLowerCase();
+  if (t.includes("额度耗尽") || t.includes("quota exhausted") || t.includes("free quota") || t.includes("free-models-per-day") || t.includes("insufficient quota")) {
+    return "⛔ 模型的额度已用完（当日/余额配额），重试无效：\n· 在 ⚙️ 里换一个模型/服务商（或给该账户充值）\n· 日额度通常次日重置\n· 想本地兜底可装 Ollama 并把 ⚙️ 地址填 http://localhost:11434/v1";
+  }
+  if (t.includes("429") || t.includes("限流") || t.includes("tpm/rpm") || t.includes("rate")) {
+    return "⛔ 模型服务限流了（请求太快或超出额度）。已按退避策略自动重试多轮仍失败：\n· 等 1–2 分钟再发一次\n· 或在 ⚙️ 里换一个模型/服务商\n· 检查账户的 TPM/RPM 配额";
+  }
+  if (t.includes("401") || t.includes("403") || t.includes("unauthorized") || t.includes("invalid api key")) {
+    return "🔑 API 密钥无效或无权限，请在 ⚙️ 里检查密钥与模型名。";
+  }
+  if (t.includes("404")) {
+    return "❓ 接口地址或模型名不对（404）。请检查 ⚙️ 里的 API 地址（应含 /v1 或由应用自动补全）与模型名。";
+  }
+  if (t.includes("timeout") || t.includes("timed out")) {
+    return "⏱ 请求超时。模型服务响应太慢，请稍后重试或换个模型。";
+  }
+  return `❌ LLM 调用失败：${errText}`;
+}
+
+/** Format tool args as `k=v` pairs, compact enough for a step heading. */
+export function argsText(args: Record<string, unknown>): string {
+  return Object.entries(args)
+    .map(([k, v]) => `${k}=${String(v).slice(0, 60)}`)
+    .join(" ");
+}
+
+/** Render one tool step heading, e.g. `🤖 步骤 1: click keyword=发送`. */
+export function stepHeading(seq: string, name: string, args: Record<string, unknown>): string {
+  const argStr = argsText(args);
+  return `🤖 ${seq} \`${name}\`${argStr ? " " + argStr : ""}`;
+}
+
+/** Step heading + its result in a code block (the "execution log" bubble). */
+export function withStepResult(heading: string, result: string): string {
+  return heading + "\n\n```\n" + truncate(result, 800) + "\n```";
 }

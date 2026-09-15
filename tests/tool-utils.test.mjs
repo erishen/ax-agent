@@ -222,3 +222,69 @@ test("parseCommand: read does not swallow refresh (checked after read)", () => {
   // but a bare "读" with nothing after still means read
   assert.deepEqual(parseCommand("读"), { kind: "read", app: "" });
 });
+
+// --- Chat text formatting + LLM error mapping (formerly inline, zero
+// coverage). friendlyLlmError is what the user reads when a model call
+// fails; stepHeading/withStepResult shape the execution-log bubbles.
+
+import {
+  argsText,
+  asText,
+  friendlyLlmError,
+  stepHeading,
+  withStepResult,
+} from "../src/tool-utils.ts";
+
+test("asText: Error message vs string fallback", () => {
+  assert.equal(asText(new Error("boom")), "boom");
+  assert.equal(asText("plain"), "plain");
+  assert.equal(asText({ x: 1 }), "[object Object]");
+  assert.equal(asText(null), "null");
+});
+
+test("friendlyLlmError: quota → actionable quota guidance", () => {
+  const out = friendlyLlmError("free quota exceeded: 500");
+  assert.match(out, /额度已用完/);
+  assert.match(out, /次日重置/);
+});
+
+test("friendlyLlmError: rate limit / 429", () => {
+  const out = friendlyLlmError("429 Too Many Requests (rate limit)");
+  assert.match(out, /限流/);
+  assert.match(out, /TPM\/RPM/);
+});
+
+test("friendlyLlmError: auth failures", () => {
+  assert.match(friendlyLlmError("401 Unauthorized"), /API 密钥无效/);
+  assert.match(friendlyLlmError("invalid api key"), /API 密钥无效/);
+  assert.match(friendlyLlmError("403 Forbidden"), /检查密钥与模型名/);
+});
+
+test("friendlyLlmError: 404 and timeout", () => {
+  assert.match(friendlyLlmError("404 model not found"), /接口地址或模型名不对/);
+  assert.match(friendlyLlmError("request timed out"), /请求超时/);
+});
+
+test("friendlyLlmError: unknown error passes through", () => {
+  assert.equal(friendlyLlmError("weird failure"), "❌ LLM 调用失败：weird failure");
+});
+
+test("argsText: k=v pairs with truncation", () => {
+  assert.equal(argsText({ keyword: "发送" }), "keyword=发送");
+  assert.equal(argsText({}), "");
+  const long = "x".repeat(100);
+  assert.ok(argsText({ k: long }).length < 100 + 8);
+});
+
+test("stepHeading: with and without args", () => {
+  assert.equal(stepHeading("1/25", "ocr", { app: "腾讯视频" }), "🤖 1/25 `ocr` app=腾讯视频");
+  assert.equal(stepHeading("2", "done", {}), "🤖 2 `done`");
+});
+
+test("withStepResult: code block, truncates long results", () => {
+  const out = withStepResult("🤖 1 `ocr`", "ok");
+  assert.equal(out, "🤖 1 `ocr`\n\n```\nok\n```");
+  const big = withStepResult("h", "y".repeat(2000));
+  assert.ok(big.length < 2000 + 200);
+  assert.ok(big.endsWith("```"));
+});
