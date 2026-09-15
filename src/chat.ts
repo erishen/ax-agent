@@ -47,18 +47,7 @@ import {
   windowBounds,
 } from "./api";
 import type { AxAppInfo, AxNode, OcrScreenWord } from "./types";
-import {
-  MAX_PAIR_HINTS,
-  MIN_CONFIDENCE,
-  MINI_STRIP_Y,
-  RATING_RE,
-  buildClickGuard,
-  buildPairs,
-  detectPage,
-  parseMiniTitle,
-  sharesBigram,
-  type PairCandidate,
-} from "./tencent";
+import { TencentUiState } from "./tencent-ui";
 import type { MenuEntry } from "./api";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
 import { invoke } from "@tauri-apps/api/core";
@@ -572,133 +561,8 @@ const DANGER_WORDS = [
   "永久删除", "清空聊天", "确认支付", "付款",
 ];
 
-/** Recent scrolls (clamped x/y + direction), for bounce detection. */
-const recentScrolls: { x: number; y: number; sign: number }[] = [];
 
-/**
- * Recent executed tools, for the blind-click guard. Observation tools
- * (ocr/wait_for/…) and scrolls reset the "no-observation run": a legitimate
- * click → observe → click cadence never trips it, while click → click → click
- * with zero verification does (self-drawn UIs show nothing unless read).
- */
-type RecentMove =
-  | { kind: "observe" | "scroll" | "other" }
-  | { kind: "click"; x: number; y: number };
-const recentMoves: RecentMove[] = [];
-
-/**
- * Consecutive element_at -25208 failures (self-drawn app). After two strikes
- * the app is confirmed to have no accessibility API — keep telling the model
- * to stop calling element_at/read_screen instead of burning steps. Reset on
- * open_app so switching to a real AX app clears the flag.
- */
-let elementAtFails = 0;
-
-/**
- * Title↔rating pairs from the most recent OCR on a list/channel page, with
- * the title's center coordinates. Filled by the ocr handler, consumed by
- * click_at: clicking the rating badge or poster edge lands on the
- * neighbouring film (the 8.7-instead-of-9.1 bug), so a click that misses
- * every paired title gets a corrective hint before it fires.
- */
-let lastListPairs: PairCandidate[] = [];
-
-/**
- * List-page OCRs in a row without a high-confidence rating digit. The model
- * tends to keep scrolling a 「最热/最新」-sorted list looking for rating
- * badges that the sort simply does not show; after two scrolls the listHint
- * escalates from "scroll more" to "switch to 高分好评 or open a detail".
- */
-let scrollsSinceRating = 0;
-
-/** Whether the most recent OCR was a list/channel page (has a back marker,
- * no rating digits). Gates the sort-tab click hint so the home page top
- * area does not get flagged as a filter bar. */
-let lastOcrList = false;
-/** Whether the most recent ocr saw a detail page (简介/选集/播放列表).
- *  List-page clicks near a rating candidate are intercepted (a Tencent card
- *  click PLAYS the film directly, and clicking near the badge opens the
- *  neighbouring poster — 14:05 session: opened sub-9 坚如磐石); detail-page
- *  clicks (选集/立即播放) must stay free. */
-let lastOcrDetail = false;
-/** Whether the most recent ocr showed a playing player (播放中/time codes).
- *  Home-page clicks near nothing rated are soft-flagged, but player-page
- *  clicks (pause/controls) must stay free. */
-let lastOcrPlayer = false;
-
-/**
- * Set when a click lands in the top filter/sort band of a rating-less
- * list: sort switches can be slow or fail silently, and the model tends
- * to scroll or click again right after tapping 高分好评 without verifying
- * (13:35 session: clicked the sort tab, then scrolled/clicked twice more
- * while the list was still on 最热). The next non-ocr action gets a
- * reminder to verify with an ocr first; the flag is consumed by the
- * reminder and cleared by any ocr.
- */
-let pendingSortVerify = false;
-
-/**
- * Titles the user has already watched — observed from the top mini-player
- * (the app auto-resumes a previously closed video, e.g. 「播放中 扒特务」
- * = 抓特务) and from the 你正在追 history page. Recommending a film the
- * user has finished defeats the task ("没有排除我已经完整看过的吧"),
- * so paired candidates that overlap a seen title are suppressed. Kept
- * across open_app: watched films stay watched.
- */
-const SEEN_KEY = "axExplorer.seenTitles.v1";
-function loadSeenTitles(): string[] {
-  try {
-    const raw = localStorage.getItem(SEEN_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string" && s.length >= 2) : [];
-  } catch {
-    return [];
-  }
-}
-/** Persist across sessions: the user's watched films stay watched even
- * after the app restarts (TaUI webview keeps localStorage). */
-function rememberSeen(title: string) {
-  if (!seenTitles.includes(title)) {
-    seenTitles.push(title);
-    try {
-      localStorage.setItem(SEEN_KEY, JSON.stringify(seenTitles));
-    } catch {
-      /* storage full / unavailable — in-memory is still fine */
-    }
-  }
-}
-let seenTitles: string[] = loadSeenTitles();
-// Quality-note gating: loading/animation frames flash low-confidence words
-// on EVERY OCR, so the note would spam itself. Only after TWO consecutive
-// low-quality reads, and at most once per 3 OCRs.
-let qualityStreak = 0;
-let ocrSinceQualityNote = 0;
-
-/**
- * Film the model itself just opened and the mini-player is now playing
- * (matched against the rating candidates in the same OCR). Clicking a
- * Tencent card starts playback directly, so a second click on the same
- * title re-plays it (13:55 session: 捕风追影 played twice). Updated by
- * every ocr; non-empty means "do not click this film again".
- */
-let miniPlayingTitle = "";
-let lastOcrChannelHome = false;
-// Detail-page verified ratings (title → score): the only trustworthy
-// rating source. Overrides unreliable list badges when pairing (16:51
-// session: badges paired as 9.0/9.8/9.1 while the films are ~8.3).
-let detailVerifiedScores = new Map<string, string>();
-
-/** True when a and b share a ≥2-char run (「抓特务」vs OCR 残字「扒特务」
- * share 「特务」). Used to match film titles across OCR noise. */
-/** One-shot reminder consumed by the next non-ocr action (scroll/click/
- * key): "you just tapped a sort tab, verify it took effect before acting
- * again". Returns "" when nothing is pending. */
-function sortVerifyReminder(): string {
-  if (!pendingSortVerify) return "";
-  pendingSortVerify = false;
-  return "\n（⚠️ 你刚点击了排序/筛选标签但还没用 ocr 验证切换是否生效——先 ocr 看顶部排序字样（最热/高分好评）与列表内容是否已变化再继续，不要盲目点击/滚动）";
-}
+const tui = new TencentUiState();
 
 /**
  * Clamp a screen point into the session target's main window frame, so
@@ -794,16 +658,7 @@ async function runTool(
           /* outline is best-effort */
         }
         state = { ...state, pid: app.pid, appName: app.name, outline };
-        elementAtFails = 0; // new target app → re-arm element_at probes
-        lastListPairs = []; // stale rating pairs from the previous app
-        scrollsSinceRating = 0;
-        lastOcrList = false;
-        lastOcrDetail = false;
-        lastOcrPlayer = false;
-        pendingSortVerify = false;
-        miniPlayingTitle = "";
-        lastOcrChannelHome = false;
-        detailVerifiedScores = new Map<string, string>();
+        tui.resetForOpenApp();
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -985,287 +840,13 @@ async function runTool(
         const words = await ocrWindow(pid);
         state = { ...state, pid, appName: name };
         if (!words.length) return { result: `${name} 窗口 OCR 未识别到文字（也许是纯图像界面）`, state };
-        // An ocr is exactly the verification a sort-tab click needs; any
-        // pending "verify the sort" reminder is satisfied here.
-        pendingSortVerify = false;
-        const joined = words
-          .sort((a, b) => a.y - b.y || a.x - b.x)
-          .slice(0, 60)
-          .map(
-            (w) =>
-              `「${w.text}」${w.w > 0 ? ` (${Math.round(w.w)}×${Math.round(w.h)})` : ""} @(${Math.round(w.x)}, ${Math.round(w.y)})` +
-              (w.confidence < 0.5 ? ` 置信${(w.confidence * 100).toFixed(0)}%` : ""),
-          )
-          .join("\n");
-        // Pair each high-confidence rating with the title text of the same
-        // poster (nearest plausible Chinese text), so the model clicks the
-        // TITLE's coordinates — clicking near the rating badge lands on the
-        // neighbouring poster (the 8.7-film-instead-of-9.1 bug).
-        const rating = words.find(
-          (w) => RATING_RE.test(w.text) && w.confidence >= MIN_CONFIDENCE,
-        );
-        // Page classification lives in src/tencent.ts (pure, regression-
-        // tested) — see detectPage for the per-session rule provenance.
-        const flags = detectPage(joined);
-        const { watchedPage, detailPage, channelHome, homeLike, playing, listPage } = flags;
-        lastOcrDetail = detailPage;
-        lastOcrPlayer = playing;
-        lastOcrChannelHome = channelHome;
-        lastOcrList = listPage;
-        let pairs: string[] = [];
-        // A detail page is the one trustworthy rating source: capture the
-        // verified (title → score) so list badges can be overridden when
-        // the model returns to the list (16:51: badges lied).
-        if (detailPage && rating) {
-          const dt = words.find((w) => /简介[＞>〉]/.test(w.text));
-          if (dt) {
-            const name = parseMiniTitle(dt.text.replace(/[^，。\s]*简介[＞>〉].*$/, ""));
-            if (name.length >= 2) {
-              detailVerifiedScores.set(name, rating.text.replace("分", ""));
-            }
-          }
-        }
-        lastListPairs =
-          rating && !watchedPage && !homeLike
-            ? buildPairs(words, { seenTitles, detailPage, verifiedScores: detailVerifiedScores })
-            : [];
-        for (const p of lastListPairs) {
-          pairs.push(
-            `「${p.title}」评分 ${p.score} 分${p.verified ? "（详情页已复核）" : ""} → 点片名坐标 (${p.x}, ${p.y})`,
-          );
-        }
-        pairs = [...new Set(pairs)].slice(0, MAX_PAIR_HINTS);
-        // Tell the model why a rated card may be missing from the pairs —
-        // it is a watched film, not an OCR miss.
-        const seenOnScreen = seenTitles.filter((s) =>
-          words.some((w) => w.text.length >= 2 && sharesBigram(w.text, s)),
-        );
-        const seenHint = seenOnScreen.length
-          ? `\n（已从候选配对中排除你看过的片：${[...new Set(seenOnScreen)].join("、")}——它们不会作为推荐候选；列表里它们的评分/海报可以忽略）`
-          : "";
-        // Playback evidence must be scoped. 「播放中」appears in two very
-        // different places:
-        //  1) a player page — real task evidence → done;
-        //  2) the top banner strip on the home/channel page. Closing the
-        //     「继续播放」toast makes Tencent Video auto-resume one of the
-        //     previously closed videos, so the banner shows 「播放中 第N集」
-        //     even though the model clicked nothing. Treating that as task
-        //     evidence would finish on the wrong video.
-        const playerEvidence = /简介|评分|播放第|选集|倍速|杜比|语言|\d{1,2}:\d{2}/.test(joined);
-        // Try to name the banner: the title word on the same row, within a
-        // moderate distance right/left of the 播放中 marker.
-        const pw = playing ? words.find((w) => /播放中|正在播放|播放[片日F！]|放中/.test(w.text)) : undefined;
-        let playingTitle = "";
-        if (pw) {
-          const near = words
-            .filter(
-              (w) =>
-                w !== pw &&
-                Math.abs(w.y - pw.y) <= 24 &&
-                Math.abs(w.x + w.w / 2 - (pw.x + pw.w / 2)) <= 420 &&
-                w.text.length >= 2 &&
-                !/播放中|正在播放|第\d+[集话]|^\d+$/.test(w.text),
-            )
-            .sort(
-              (a, b) =>
-                Math.abs(a.x + a.w / 2 - (pw.x + pw.w / 2)) -
-                Math.abs(b.x + b.w / 2 - (pw.x + pw.w / 2)),
-            )[0];
-          if (near) playingTitle = `「${near.text}」`;
-        }
-        // Quality hint: many low-confidence / garbled words usually mean the
-        // page is mid-transition (loading, animation, overlay) — telling the
-        // model to re-scan after a beat instead of trusting the noise.
-        // Gated: two CONSECUTIVE low-quality reads, then at most once per 3
-        // OCRs — a loading frame alone would otherwise spam every read.
-        const lowConf = words.filter((w) => w.confidence < MIN_CONFIDENCE).length;
-        const lowConfRatio = words.length > 3 && (lowConf / words.length > 0.5 || lowConf >= 10);
-        ocrSinceQualityNote += 1;
-        let qualityNote = "";
-        if (lowConfRatio) {
-          qualityStreak += 1;
-          if (qualityStreak >= 2 && ocrSinceQualityNote >= 3) {
-            qualityNote = "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面；若连续多次乱码，检查窗口是否被遮挡/未最大化（move_window maximize）或目标应用是否在前台。";
-            ocrSinceQualityNote = 0;
-          }
-        } else {
-          qualityStreak = 0;
-        }
-        // Detail-page play guidance: self-drawn players (Tencent Video etc.)
-        // render the play control as an unlabeled image button the OCR can't
-        // name — tell the model where to look / how to fall back to keyboard.
-        // 「立即播放」is NOT a detail marker: the resume toast on the home
-        // page shows it too, which would mis-fire this hint. Gate the
-        // coordinate on detail-like content; OCR renders detail ratings as
-        // 「9.0分」, not the literal 「评分」.
-        const detailLike = /简介|评分|播放第|第\d+集|\d\.\d分/.test(joined);
-        const playBtn = detailLike ? words.find((w) => /立即播放/.test(w.text)) : undefined;
-        const inDetail = !playing && detailLike;
-        const playHint = playBtn
-          ? `\n（详情页「立即播放」按钮在 (${Math.round(playBtn.x + playBtn.w / 2)}, ${Math.round(playBtn.y + playBtn.h / 2)})：评分达标就点它开始播放，随后 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现再 done）`
-          : inDetail
-            ? "\n（详情页播放按钮多为无文字的绿色大按钮，位于片名/简介行的下方或右侧；OCR 识别不到按钮文字时，可先按空格键尝试播放，或对按钮区域再 ocr 一次）"
-            : "";
-        // Resume-dialog hint: Tencent Video opens a "继续播放之前关闭的 N 个视频"
-        // toast over the home page. Clicking home cards underneath (stale
-        // resume items) either starts playing something the user had closed or
-        // does nothing — close the toast first at the OCR coordinates.
-        const resume = /继续播放之前关闭的\s*\d+\s*个视频/.test(joined);
-        const dialogHint = resume
-          ? "\n（检测到「继续播放」弹窗：先点击 OCR 中「关闭」或「立即播放」的坐标处理掉它，再操作首页其他内容——直接点首页卡片可能误播你之前关闭的视频。注意：点「关闭」后顶部若出现「播放中」小窗，那是应用自动恢复播放之前关闭的视频，不是你的点击所致，与任务无关可忽略或按空格暂停）"
-          : "";
-        // 「你正在追」history page guard: clicking a card resume-plays it
-        // (no detail page, no rating re-check) and its scores are for films
-        // the user already watched — not the high-score candidate pool.
-        const watchedHint = watchedPage
-          ? "\n（检测到「你正在追/历史观看」页（观看至N%/已看完标签）：这些是你追过的剧，评分不代表高分新片池，点击卡片会【直接续播】而不会打开详情页。任务要挑高分电影：回到「电影」频道列表页并切「高分好评」排序（或点开候选片详情页复核），不要在本页点卡片播放）"
-          : "";
-        // Detail-page rating guard: a detail page carries 简介/选集/播放列表
-        // markers that never appear on list/home pages. If its rating is
-        // below the 9.0 bar, say so loudly — the agent otherwise keeps
-        // fiddling with a film it must not play (13:22 session: opened the
-        // wrong 8.1 detail after a stale-coordinate click and never noticed).
-        const ratingNum = rating ? parseFloat(rating.text) : NaN;
-        const ratingGuard =
-          detailPage && rating && !Number.isNaN(ratingNum) && ratingNum < 9
-            ? `\n（当前详情页评分 ${rating.text.replace("分", "")} 分 < 9，【不达标】：不要点播放/立即播放。按 esc 返回列表（返回后 ocr 确认回到列表），重新挑选评分 ≥9 的候选片；本页的推荐/选集/播放列表都是这个低分片的周边内容，不要继续操作）`
-            : "";
-        // A detail page for a film the user already watched (mini-player
-        // resume / 你正在追): even at 9+, it is not a valid recommendation.
-        const seenOnDetail = detailPage
-          ? seenTitles.find((s) => words.some((w) => w.text.length >= 2 && sharesBigram(w.text, s)))
-          : undefined;
-        const seenDetailHint = seenOnDetail
-          ? `\n（⚠️ 当前详情页这部片（${seenOnDetail}）是你之前看过的：不要把它作为任务推荐片。即使评分 ≥9 也不要点播放——按 esc 返回列表，换一部没看过的片）`
-          : "";
-        // Channel home / list hero cards also show rating + 立即播放, but
-        // they are NOT a detail page and the hero card auto-rotates — the
-        // button belongs to whichever card is shown at click time (13:28
-        // session: clicked 出入平安 9.3's button, the card rotated and a
-        // different film opened). Warn neutrally when a rated 立即播放 has
-        // no detail-page markers around it.
-        const heroCard =
-          playBtn !== undefined && !detailPage && /\d\.\d分/.test(joined);
-        const heroHint = heroCard
-          ? "\n（注意：带评分的「立即播放」旁没有详情页特征（简介/选集/播放列表）——当前是频道首页/列表大卡片而非详情页。首页大卡片会自动轮播，点「立即播放」前先确认当前展示卡片的片名与评分确实对应，评分达标再点，否则可能打开轮播到的别的片）"
-          : "";
-        // 「播放中」position decides what it means. In the top strip
-        // (y<140, Tencent's mini-player / resume banner) it is the app
-        // auto-resuming a previously closed video — NOT evidence the task
-        // film is playing, even when a rated detail page is on screen.
-        // Only a 播放中 marker in the page body counts as playback proof.
-        // The strip's state word OCRs as noise (播放片/播放F/播放日/放中),
-        // so any 第N话/集 marker at y<140 flags the mini-player too, even
-        // without a readable 「播放中」.
-        const topEpi = words.find((w) => w.y < MINI_STRIP_Y && /第\d+[话集]/.test(w.text));
-        // The strip's play glyph OCRs as II/I1/口 followed by the film title
-        // with no readable state word at all (13:28 session: 「II •E让眼泪
-        // 变珍王」= a resumed 心动的信号). Any such marker at y<140 is the
-        // mini-player, even without 播放中 or 第N话.
-        const topPlayer = words.find(
-          (w) => w.y < MINI_STRIP_Y && /^(II|I1|口)[^，。]{2,}/.test(w.text),
-        );
-        const miniPlayer =
-          topEpi !== undefined || topPlayer !== undefined || (pw !== undefined && pw.y < MINI_STRIP_Y);
-        // The resumed mini-player is a film the user recently watched — keep
-        // its title so the pairing / detail guards never offer it again
-        // (13:47 session: 「II 口播放中 扒特务」= 抓特务, yet the model kept
-        // trying to open it from the list).
-        const miniWord = topPlayer ?? pw ?? topEpi;
-        // The mini-player is either the app auto-resuming a previously
-        // closed video (a film the user already watched) OR the task film
-        // the model just opened — clicking a Tencent card directly starts
-        // playback (13:55 session: tapping 捕风追影 played it, yet the
-        // model thought nothing had started and clicked it again, playing
-        // it a second time). Decide by matching the strip's title against
-        // the current rating candidates: a match means the task film is
-        // already playing (playback evidence, NOT a watched film); no
-        // match means an auto-resumed old film (watched, exclude it).
-        let miniSeenTitle = "";
-        let miniPlaying = "";
-        if (miniWord) {
-          const raw = parseMiniTitle(miniWord.text);
-          if (raw.length >= 2) {
-            const isTaskFilm = lastListPairs.some((p) => sharesBigram(p.title, raw));
-            if (isTaskFilm) {
-              // The strip is playing a candidate the model just clicked:
-              // that IS the task playback. Remember it so repeat clicks on
-              // the same film are blocked.
-              miniPlaying = raw;
-              miniPlayingTitle = raw;
-              rememberSeen(raw);
-            } else {
-              miniSeenTitle = raw;
-              miniPlayingTitle = "";
-              rememberSeen(raw);
-            }
-          } else {
-            miniPlayingTitle = "";
-          }
-        }
-        const miniHint = miniPlaying
-          ? `\n（顶部小窗正在播放「${miniPlaying}」——这就是你刚点开的候选片，任务播放【已开始】：按规则确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报，【不要再点击它】——重复点击卡片会把它重新播放一遍（13:55 会话把同一部片播放了两遍）。注意：它的评分来自列表徽标配对，【未经详情页复核】——如果用户指出分数不对（如实际只有 8.x），说明配对评分错了（评分徽标错配到相邻卡片），此片不达标：不要 done，按 esc 返回列表重新 ocr 挑片）`
-          : `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成${miniSeenTitle ? `。另外：小窗里这部（${miniSeenTitle}）是你之前看过的片，任务推荐应排除它——不要在列表里再找它/点它` : ""}）`;
-        const playingHint = miniPlayer
-          ? miniHint
-          : playing
-            ? playerEvidence
-              ? `\n（检测到「播放中」标记：${playingTitle}视频已在播放页播放，按规则立即 done 汇报，不要再点击）`
-              : `\n（检测到「播放中」标记${playingTitle}但缺少播放器证据：先确认是否真在播放（时间码/选集/倍速控件），若只是页面残留标记则继续任务）`
-            : "";
-        // List/channel page without any rating digits: the model tends to
-        // re-click filter tabs (already selected) instead of scrolling to
-        // read the per-card ratings. Guide it to scroll / open a detail.
-        // Recognize the current sort from the channel header, e.g.
-        // 「电影 •最热 •院线电影」/「电影•高分好评•全部电影」. The model
-        // keeps scrolling a 最热 list hunting for badges the sort does not
-        // show, unaware which sort it is on (13:35 session kept scrolling
-        // while the header still said 最热 after tapping 高分好评).
-        const sortLabel =
-          joined.match(/电影\s*[•·]\s*(最热|最新|高分好评)/)?.[1] ??
-          joined.match(/(最热|最新|高分好评)\s*[•·]\s*(院线电影|全部电影|电影)/)?.[1] ??
-          null;
-        // Track consecutive rating-less list OCRs so the hint can escalate
-        // from "scroll another screen" to "switch sort / open a detail".
-        if (rating) {
-          scrollsSinceRating = 0;
-        } else if (listPage) {
-          scrollsSinceRating += 1;
-        }
-        const listHint = listPage
-          ? sortLabel === "高分好评"
-            ? "\n（当前已切到「高分好评」排序：卡片按评分排列，直接读本屏各卡片评分挑 ≥9 的候选；若本屏评分都 <9 再滚动换屏，不要再切回其他排序）"
-            : sortLabel === "最热" || sortLabel === "最新"
-              ? `\n（当前是「${sortLabel}」排序（如「电影•最热•院线电影」）：该排序下评分参差，部分卡片不显示评分徽标，继续滚动也读不到分。任务要求 ≥9 的高分片：点顶部「高分好评」标签切换（ocr 中有其坐标），或点开候选片详情页用详情页评分筛选；不要在同一列表里反复滚动）`
-              : scrollsSinceRating >= 2
-                ? `\n（已连续 ${scrollsSinceRating} 次列表页未见评分数字：当前多半是「最热/最新」排序，卡片不显示评分徽标，继续滚动也读不到分。改切「高分好评」排序（ocr 顶部筛选栏该标签坐标），或直接点开候选片详情页用详情页评分筛选；不要继续在同一列表里盲目滚动）`
-                : "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
-          : "";
-        // Home/navigation page with no list/detail/player markers. The model
-        // tends to click whatever card catches its eye (你正在追 / hot-list
-        // / recommendations), and Tencent cards PLAY directly on click —
-        // that is how the 16:33 session opened 心动的信号9 before ever
-        // entering the film channel, and how the 16:43 session (after the
-        // window move reset Tencent to home) scrolled the rated home feed
-        // hunting for 马腾你别走 9.7. Steer it to the 电影 channel instead.
-        const homeHint = homeLike
-          ? "\n（当前是首页/导航页——【不是电影频道列表】：即使本屏带评分卡（如 9.7 推荐位），首页卡片点卡会【直接播放】无关内容，评分也不代表频道候选池；窗口移动/最大化会让腾讯视频重置回首页。请点左侧导航「电影」（x≈200, y≈370）重新进入频道列表，在频道页滚动读取各片评分挑 ≥9 候选，再点片名坐标进详情页复核——不要在首页点卡片/滚动找片）"
-          : "";
+        // The whole Tencent-Video OCR decision (page classification, rating
+        // pairing, mini-player detection, all 11 hints, state updates) lives
+        // in TencentUiState.processOcr — regression-tested in
+        // tests/tencent-ui.test.mjs with the real session word-lists.
+        const { joined, hints } = tui.processOcr(words);
         return {
-          result:
-            `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}` +
-            (pairs.length ? `\n\n【评分-片名配对】（点片名坐标打开详情，不会错位）：\n${pairs.join("\n")}` : "") +
-            playingHint +
-            playHint +
-            dialogHint +
-            watchedHint +
-            ratingGuard +
-            seenDetailHint +
-            heroHint +
-            listHint +
-            homeHint +
-            seenHint +
-            qualityNote,
+          result: `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}${hints}`,
           state,
         };
       }
@@ -1478,10 +1059,10 @@ async function runTool(
         } catch (e) {
           const msg = String(e);
           if (msg.includes("-25208")) {
-            elementAtFails += 1;
+            const note = tui.elementAtNote();
             const persistent =
-              elementAtFails >= 2
-                ? `（已连续失败 ${elementAtFails} 次：该应用确认不支持 element_at/read_screen，请不要再调用它们，只用 ocr 读屏 + click_at 操作推进）`
+              note !== ""
+                ? note
                 : "这个应用请改用 ocr 读界面、click_at 操作，element_at/read_screen 对它不可用。";
             return {
               result: `element_at 在该位置失败（错误 -25208 = 应用不实现辅助功能 API，典型自绘 UI）。${persistent}`,
@@ -1517,38 +1098,16 @@ async function runTool(
         // 来回滚动检测：同一坐标先向下再向上（或反之）是无效操作——内容
         // 回到原位，白白消耗步数。发现则拦下并提示换思路。
         const sign = lines > 0 ? 1 : -1;
-        const bounced = recentScrolls.some(
-          (s) => Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4 && s.sign === -sign,
-        );
-        recentScrolls.push({ x, y, sign });
-        if (recentScrolls.length > 4) recentScrolls.shift();
-        if (bounced) {
+        if (tui.scrollBounced(x, y, sign)) {
           return {
             result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行，但注意到你刚刚在同一位置向反方向滚过——来回滚动不会带来新内容。先 read_screen/ocr 看当前界面，确定要朝哪个方向翻页、翻到哪里，再一次性滚动到位。`,
             state,
           };
         }
         await scrollAt(x, y, lines, state.pid ?? undefined);
-        // The model scrolls away while a qualifying candidate (rating ≥ 9)
-        // from the last OCR was right on screen (13:35 session: 小气鬼 9.1
-        // paired at step 20, then two more scrolls). After the scroll its
-        // coordinates are gone — remind it what it just left behind.
-        const qualified = lastListPairs
-          .filter((p) => {
-            const n = parseFloat(p.score.replace("分", ""));
-            return !Number.isNaN(n) && n >= 9;
-          })
-          .slice(0, 2);
-        // 滚动后屏幕内容已移动：任何来自上次 ocr 的评分-片名配对坐标都已
-        // 失效。不清空的话 click_at 会用旧坐标提示「将打开 X」而实际点到
-        // 滚动后的别的卡片（13:22 会话：滚动后未 ocr 即点狄仁杰坐标，
-        // 结果打开的是 8.1 分的定海神针详情页）。
-        lastListPairs = [];
-        const qualifiedNote = qualified.length
-          ? `\n⚠️ 注意：滚动前本屏上次 ocr 已有达标候选——${qualified.map((p) => `「${p.title}」评分 ${p.score}（片名坐标 ${p.x},${p.y}）`).join("、")}。如果还没点它，滚动后坐标已失效：先滚回上一屏重新 ocr 定位再点，不要继续滚向更远；评分 <9 不达标才值得继续找。`
-          : "";
+        const { qualifiedNote } = tui.scrollAwayNote();
         return {
-          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。${qualifiedNote}${sortVerifyReminder()}`,
+          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。${qualifiedNote}${tui.sortVerifyReminder()}`,
           state,
         };
       }
@@ -1595,7 +1154,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。${sortVerifyReminder()}`, state };
+        return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。${tui.sortVerifyReminder()}`, state };
       }
       case "type_keys": {
         const text = str("text");
@@ -1613,18 +1172,7 @@ async function runTool(
           return { result: "需要数字坐标 x, y", state };
         }
         const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
-        const guard = buildClickGuard({
-          x: Math.round(x),
-          y: Math.round(y),
-          verb: "单击",
-          pairs: lastListPairs,
-          miniPlayingTitle,
-          lastOcrDetail,
-          lastOcrList,
-          lastOcrChannelHome,
-          lastOcrPlayer,
-        });
-        if (guard.setSortVerify) pendingSortVerify = true;
+        const guard = tui.clickGuard(Math.round(x), Math.round(y), "单击");
         if (guard.blocked) return { result: guard.blocked, state };
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
@@ -1634,7 +1182,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
       case "double_click_at": {
         const rawX = Number(args.x);
@@ -1643,18 +1191,7 @@ async function runTool(
           return { result: "需要数字坐标 x, y", state };
         }
         const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
-        const guard = buildClickGuard({
-          x: Math.round(x),
-          y: Math.round(y),
-          verb: "双击",
-          pairs: lastListPairs,
-          miniPlayingTitle,
-          lastOcrDetail,
-          lastOcrList,
-          lastOcrChannelHome,
-          lastOcrPlayer,
-        });
-        if (guard.setSortVerify) pendingSortVerify = true;
+        const guard = tui.clickGuard(Math.round(x), Math.round(y), "双击");
         if (guard.blocked) return { result: guard.blocked, state };
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
@@ -1662,7 +1199,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${sortVerifyReminder()}`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}`, state };
       }
       case "drag": {
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
@@ -2021,52 +1558,19 @@ async function runSteps(
           call.function.name === "click_at" || call.function.name === "double_click_at";
         const cx = isClickTool && typeof args.x === "number" ? Number(args.x) : null;
         const cy = isClickTool && typeof args.y === "number" ? Number(args.y) : null;
-        if (isClickTool && cx !== null && cy !== null) {
-          const run: { x: number; y: number }[] = [];
-          for (let i = recentMoves.length - 1; i >= 0; i--) {
-            const m = recentMoves[i];
-            if (m.kind === "click") run.push({ x: m.x, y: m.y });
-            else break;
-          }
-          run.push({ x: cx, y: cy });
-          if (run.length >= 3) {
-            const allNear = run.every((p) =>
-              run.every((q) => Math.abs(p.x - q.x) <= 60 && Math.abs(p.y - q.y) <= 60),
-            );
-            if (allNear) {
-              const hint =
-                `您已在同一区域连续点击 ${run.length} 次（坐标相距 ≤60pt），且期间没有任何观察。\n` +
-                "点击后页面毫无变化的原因排查（自绘 UI 不读屏就看不见）：\n" +
-                "1. 目标已不在该坐标（窗口移动/最大化/滚动后布局变了）→ 先 ocr 找导航项当前位置；\n" +
-                "2. 点击被弹窗/覆盖层挡住 → 先 ocr 找「关闭/取消」；\n" +
-                "3. 页面切换有延迟 → 用 wait_for text=页面特征词（勿用导航栏恒在的词）等待。\n" +
-                "请先 ocr 复核现状再决定下一步，不要继续盲点同一位置。";
-              const seq = `${seqBase + steps + 1}/${budget}`;
-              const heading = stepHeading(seq, call.function.name, args);
-              const stepId = nextId++;
-              working = commit({
-                ...working,
-                messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, hint) }],
-              });
-              llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: hint });
-              continue;
-            }
-            blindWarn =
-              `⚠️ 您已连续点击 ${run.length} 次且中间没有任何 ocr/wait_for 验证（本次已执行）。` +
-              "自绘 UI 中每步点击后都应观察：点完先 wait_for 页面特征词或 ocr 确认真的切换了；" +
-              "页面无变化就换坐标/换方式，不要连续盲点。";
-          }
+        const blind = tui.trackMove(call.function.name, cx, cy);
+        if (blind.block) {
+          const seq = `${seqBase + steps + 1}/${budget}`;
+          const heading = stepHeading(seq, call.function.name, args);
+          const stepId = nextId++;
+          working = commit({
+            ...working,
+            messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, blind.block) }],
+          });
+          llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: blind.block });
+          continue;
         }
-        if (isClickTool && cx !== null && cy !== null) {
-          recentMoves.push({ kind: "click", x: cx, y: cy });
-        } else if (OBSERVE_TOOLS.has(call.function.name)) {
-          recentMoves.push({ kind: "observe" });
-        } else if (call.function.name === "scroll") {
-          recentMoves.push({ kind: "scroll" });
-        } else {
-          recentMoves.push({ kind: "other" });
-        }
-        if (recentMoves.length > 8) recentMoves.shift();
+        blindWarn = blind.warn ?? null;
         const seq = `${seqBase + steps + 1}/${budget}`;
         const heading = stepHeading(seq, call.function.name, args);
         const stepId = nextId++;
