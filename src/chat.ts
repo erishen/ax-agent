@@ -643,6 +643,7 @@ let seenTitles: string[] = [];
  * every ocr; non-empty means "do not click this film again".
  */
 let miniPlayingTitle = "";
+let lastOcrChannelHome = false;
 
 /** True when a and b share a ≥2-char run (「抓特务」vs OCR 残字「扒特务」
  * share 「特务」). Used to match film titles across OCR noise. */
@@ -767,6 +768,7 @@ async function runTool(
         lastOcrPlayer = false;
         pendingSortVerify = false;
         miniPlayingTitle = "";
+        lastOcrChannelHome = false;
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -980,6 +982,18 @@ async function runTool(
         // dx≈200 apart — pairing rules differ between the two).
         const detailPage = /简介[＞>〉]|选集|播放列表/.test(joined);
         lastOcrDetail = detailPage;
+        // Channel home (电影/电视剧… feed): the nav strip sits on the left
+        // like the main home, but the content area is a rated channel feed
+        // (电影热播榜第1名 + a 9.3 badge). homeLike must NOT swallow it —
+        // 17:07 session: after tapping 电影 the model was told "this is the
+        // home, no rating candidates" while a 9.3 badge was on screen, then
+        // it flailed on the sort tabs. 热播榜 is channel-feed only (the
+        // main home shows 飙升总榜/热搜总榜), so it disables homeLike; the
+        // feed's ratings stay pair-able and get their own click hint.
+        const channelHome =
+          !/返回|最热|最新|高分好评|简介[＞>]|选集|播放列表|播放中|正在播放/.test(joined) &&
+          /热播榜/.test(joined);
+        lastOcrChannelHome = channelHome;
         // Home / navigation page: no list markers (back, sort tabs), no
         // detail markers, no player markers, but carrying the 你正在追 nav
         // word. The home page ALSO shows rated recommendation cards
@@ -1227,6 +1241,12 @@ async function runTool(
           !/\d+\.\d/.test(joined) &&
           !playing;
         lastOcrList = listPage;
+        // The sort-verify flag is one-shot: the click warning was already
+        // shown, and an OCR cannot tell whether a selected tab changed
+        // (highlight is invisible to OCR, all tab words stay on screen) —
+        // keeping it set spams every later click with the same warning
+        // (17:07 session: steps 11/14/22/25 all re-warned). Clear on OCR.
+        if (pendingSortVerify) pendingSortVerify = false;
         // Recognize the current sort from the channel header, e.g.
         // 「电影 •最热 •院线电影」/「电影•高分好评•全部电影」. The model
         // keeps scrolling a 最热 list hunting for badges the sort does not
@@ -1661,6 +1681,15 @@ async function runTool(
           pendingSortVerify = true;
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
+        } else if (lastOcrChannelHome && !lastOcrDetail && !lastOcrPlayer) {
+          // Channel home (rated feed, e.g. 电影热播榜第1名 + 9.3 badge):
+          // NOT the nav home — ratings here are real and pair-able, but a
+          // card click plays directly / jumps to the list, so the model
+          // should not play from this screen without a detail check
+          // (17:07 session: it was told "home, no candidates" while a 9.3
+          // was on screen and flailed on the sort tabs).
+          pairNote =
+            "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。";
         } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < 150 && Math.round(x) >= 400) {
           // Top strip (hot-list / 片库 / search) — unrelated to the rating
           // task; clicking a hot entry opens/plays that title (16:43 session
@@ -1716,6 +1745,9 @@ async function runTool(
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
           pendingSortVerify = true;
+        } else if (lastOcrChannelHome && !lastOcrDetail && !lastOcrPlayer) {
+          pairNote =
+            "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。";
         } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < 150 && Math.round(x) >= 400) {
           pairNote =
             "\n⚠️ 顶部 y<150 是热搜榜/片库/搜索条：点热搜条目会打开（可能直接播放）该片，与评分任务无关。回列表滚动读评分挑 ≥9 候选，不要点顶部条目。";
