@@ -98,6 +98,111 @@ export interface PairCandidate {
   verified?: boolean;
 }
 
+export interface ClickGuardOpts {
+  x: number;
+  y: number;
+  /** "单击" | "双击" — used in the guard messages. */
+  verb: string;
+  pairs: PairCandidate[];
+  miniPlayingTitle: string;
+  lastOcrDetail: boolean;
+  lastOcrList: boolean;
+  lastOcrChannelHome: boolean;
+  lastOcrPlayer: boolean;
+}
+
+export interface ClickGuardResult {
+  /** Soft hint appended to the click result (may be empty). */
+  note: string;
+  /** Non-empty = hard block: the click must not fire. */
+  blocked?: string;
+  /** A sort/filter tab click: caller should arm the one-shot sort verify. */
+  setSortVerify: boolean;
+}
+
+/** Click guard for Tencent-Video self-drawn UI. A card/poster click PLAYS
+ * the film directly (no detail page), so a click that misses every paired
+ * title — rating badge edge, actor row, poster border — opens a wrong or
+ * sub-9 film (14:05 session: 坚如磐石 was played this way; the 8.7-
+ * instead-of-9.1 bug). Pure so the guard itself is regression-tested
+ * (it is the anti-misplay firewall, and was duplicated across click_at /
+ * double_click_at with zero coverage). */
+export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
+  const { x, y, verb, pairs, miniPlayingTitle } = opts;
+  const base: ClickGuardResult = { note: "", setSortVerify: false };
+  if (!pairs.length) {
+    if (opts.lastOcrList && y <= 280 && x >= 330) {
+      // No rating pairs on screen (rating-less list): a click in the top
+      // filter/sort band is probably a sort tab (the back button sits at
+      // x≈320, so the band starts at 330). Sorting switches can be slow or
+      // fail silently — arm verification.
+      return {
+        note:
+          "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）",
+        setSortVerify: true,
+      };
+    }
+    if (opts.lastOcrChannelHome && !opts.lastOcrDetail && !opts.lastOcrPlayer) {
+      return {
+        note:
+          "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。",
+        setSortVerify: false,
+      };
+    }
+    if (!opts.lastOcrDetail && !opts.lastOcrPlayer && y < MINI_STRIP_Y && x >= 400) {
+      return {
+        note:
+          "\n⚠️ 顶部 y<150 是热搜榜/片库/搜索条：点热搜条目会打开（可能直接播放）该片，与评分任务无关。回列表滚动读评分挑 ≥9 候选，不要点顶部条目。",
+        setSortVerify: false,
+      };
+    }
+    if (!opts.lastOcrDetail && !opts.lastOcrPlayer && y > 280 && x >= 300) {
+      return {
+        note:
+          "\n⚠️ 当前屏幕没有评分候选配对（首页/导航页）：腾讯视频首页的「你正在追」/热搜/推荐卡片点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。先点左侧导航「电影」（x≈200, y≈370）进入评分列表，再按配对坐标点片名；不要在首页点卡片。",
+        setSortVerify: false,
+      };
+    }
+    return base;
+  }
+  const onTitle = pairs.find(
+    (p) => Math.abs(x - p.x) <= 60 && Math.abs(y - p.y) <= 40,
+  );
+  const nearest = pairs
+    .map((p) => ({ p, d: Math.hypot(x - p.x, y - p.y) }))
+    .sort((a, b) => a.d - b.d)[0];
+  // The film is already playing in the top mini-strip (just opened it):
+  // clicking again re-plays it — refuse to steer the model that way.
+  if (onTitle && miniPlayingTitle && sharesBigram(onTitle.title, miniPlayingTitle)) {
+    return {
+      note: `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`,
+      setSortVerify: false,
+    };
+  }
+  if (onTitle) {
+    return {
+      note: `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`,
+      setSortVerify: false,
+    };
+  }
+  if (nearest && nearest.d < 180 && !opts.lastOcrDetail && y > 280) {
+    // List page, click missed every paired title: the nearby poster would
+    // open a wrong or sub-9 film. Refuse to fire.
+    return {
+      blocked: `⛔ ${verb} (${x}, ${y}) 被守卫拦截：它没落在任何评分候选的片名上（最近候选「${nearest.p.title}」评分 ${nearest.p.score} @(${nearest.p.x}, ${nearest.p.y})）。腾讯视频点卡片会直接开始播放，评分徽标/海报边缘/演员行会打开错误的片。先 ocr 刷新列表，确认目标片的片名与评分都在配对清单里，再点它的片名坐标；要切排序/筛选请点顶部标签（y≤280）。`,
+      note: "",
+      setSortVerify: false,
+    };
+  }
+  if (nearest && nearest.d < 180) {
+    return {
+      note: `\n⚠️ ${verb}位置 (${x}, ${y}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`,
+      setSortVerify: false,
+    };
+  }
+  return base;
+}
+
 /** Pair each high-confidence rating with the title text of the same
  * poster (nearest plausible Chinese text), so the model clicks the
  * TITLE's coordinates — clicking near the rating badge lands on the

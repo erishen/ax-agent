@@ -52,6 +52,7 @@ import {
   MIN_CONFIDENCE,
   MINI_STRIP_Y,
   RATING_RE,
+  buildClickGuard,
   buildPairs,
   detectPage,
   parseMiniTitle,
@@ -1612,66 +1613,19 @@ async function runTool(
           return { result: "需要数字坐标 x, y", state };
         }
         const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
-        // Rating-task guard: when the last OCR carried title↔rating pairs,
-        // a click that misses every paired title is likely aimed at a rating
-        // badge or poster edge — which opens the neighbouring film (the
-        // 8.7-instead-of-9.1 bug). Hint at the closest candidate instead of
-        // clicking blindly. Far-away clicks (nav rail, top bar) are left alone.
-        let pairNote = "";
-        if (lastListPairs.length) {
-          const px = Math.round(x);
-          const py = Math.round(y);
-          const onTitle = lastListPairs.find(
-            (p) => Math.abs(px - p.x) <= 60 && Math.abs(py - p.y) <= 40,
-          );
-          const nearest = lastListPairs
-            .map((p) => ({ p, d: Math.hypot(px - p.x, py - p.y) }))
-            .sort((a, b) => a.d - b.d)[0];
-          // 该片已在顶部小窗播放中（刚点开的任务片）：再点会重新播放一遍，拦截。
-          if (onTitle && miniPlayingTitle && sharesBigram(onTitle.title, miniPlayingTitle)) {
-            pairNote = `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`;
-          } else if (onTitle) {
-            pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
-          } else if (nearest && nearest.d < 180 && !lastOcrDetail && py > 280) {
-            // List page, click missed every paired title: a Tencent card
-            // click PLAYS the film directly, so the nearby poster (rating
-            // badge edge / actor row) would open a wrong or sub-9 film
-            // (14:05 session: 坚如磐石 was played this way). Refuse to fire.
-            return { result: `⛔ 点击 (${px}, ${py}) 被守卫拦截：它没落在任何评分候选的片名上（最近候选「${nearest.p.title}」评分 ${nearest.p.score} @(${nearest.p.x}, ${nearest.p.y})）。腾讯视频点卡片会直接开始播放，评分徽标/海报边缘/演员行会打开错误的片。先 ocr 刷新列表，确认目标片的片名与评分都在配对清单里，再点它的片名坐标；要切排序/筛选请点顶部标签（y≤280）。`, state };
-          } else if (nearest && nearest.d < 180) {
-            pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
-          }
-        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 330) {
-          // No rating pairs on screen (rating-less list): a click in the
-          // top filter/sort band is probably a sort tab (the back button
-          // sits at x≈320, so the band starts at 330). Sorting switches
-          // (最热/高分好评/类型) can be slow or fail silently — verify.
-          pendingSortVerify = true;
-          pairNote =
-            "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
-        } else if (lastOcrChannelHome && !lastOcrDetail && !lastOcrPlayer) {
-          // Channel home (rated feed, e.g. 电影热播榜第1名 + 9.3 badge):
-          // NOT the nav home — ratings here are real and pair-able, but a
-          // card click plays directly / jumps to the list, so the model
-          // should not play from this screen without a detail check
-          // (17:07 session: it was told "home, no candidates" while a 9.3
-          // was on screen and flailed on the sort tabs).
-          pairNote =
-            "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。";
-        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < MINI_STRIP_Y && Math.round(x) >= 400) {
-          // Top strip (hot-list / 片库 / search) — unrelated to the rating
-          // task; clicking a hot entry opens/plays that title (16:43 session
-          // tapped (2426,87) on the 心动的信号9 hot entry). Soft-flag.
-          pairNote =
-            "\n⚠️ 顶部 y<150 是热搜榜/片库/搜索条：点热搜条目会打开（可能直接播放）该片，与评分任务无关。回列表滚动读评分挑 ≥9 候选，不要点顶部条目。";
-        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) > 280 && Math.round(x) >= 300) {
-          // No rating pairs and not a rated list / detail / player: this is
-          // the home or a navigation page. Tencent cards PLAY on click, so
-          // a stray tap here starts unrelated content (16:33 session opened
-          // 心动的信号9 before ever entering the film channel). Soft-flag.
-          pairNote =
-            "\n⚠️ 当前屏幕没有评分候选配对（首页/导航页）：腾讯视频首页的「你正在追」/热搜/推荐卡片点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。先点左侧导航「电影」（x≈200, y≈370）进入评分列表，再按配对坐标点片名；不要在首页点卡片。";
-        }
+        const guard = buildClickGuard({
+          x: Math.round(x),
+          y: Math.round(y),
+          verb: "单击",
+          pairs: lastListPairs,
+          miniPlayingTitle,
+          lastOcrDetail,
+          lastOcrList,
+          lastOcrChannelHome,
+          lastOcrPlayer,
+        });
+        if (guard.setSortVerify) pendingSortVerify = true;
+        if (guard.blocked) return { result: guard.blocked, state };
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
         await clickAt(x, y, state.pid ?? undefined);
@@ -1680,7 +1634,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${pairNote}${sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
       case "double_click_at": {
         const rawX = Number(args.x);
@@ -1689,47 +1643,26 @@ async function runTool(
           return { result: "需要数字坐标 x, y", state };
         }
         const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
-        let pairNote = "";
-        if (lastListPairs.length) {
-          const px = Math.round(x);
-          const py = Math.round(y);
-          const onTitle = lastListPairs.find(
-            (p) => Math.abs(px - p.x) <= 60 && Math.abs(py - p.y) <= 40,
-          );
-          const nearest = lastListPairs
-            .map((p) => ({ p, d: Math.hypot(px - p.x, py - p.y) }))
-            .sort((a, b) => a.d - b.d)[0];
-          // 该片已在顶部小窗播放中（刚点开的任务片）：再点会重新播放一遍，拦截。
-          if (onTitle && miniPlayingTitle && sharesBigram(onTitle.title, miniPlayingTitle)) {
-            pairNote = `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`;
-          } else if (onTitle) {
-            pairNote = `\n（将打开「${onTitle.title}」（评分 ${onTitle.score}）：进详情页后先 ocr 复核评分达标再点播放）`;
-          } else if (nearest && nearest.d < 180 && !lastOcrDetail && py > 280) {
-            return { result: `⛔ 双击 (${px}, ${py}) 被守卫拦截：它没落在任何评分候选的片名上（最近候选「${nearest.p.title}」评分 ${nearest.p.score} @(${nearest.p.x}, ${nearest.p.y})）。腾讯视频点卡片会直接开始播放，评分徽标/海报边缘/演员行会打开错误的片。先 ocr 刷新列表，确认目标片的片名与评分都在配对清单里，再点它的片名坐标；要切排序/筛选请点顶部标签（y≤280）。`, state };
-          } else if (nearest && nearest.d < 180) {
-            pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
-          }
-        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 330) {
-          pairNote =
-            "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
-          pendingSortVerify = true;
-        } else if (lastOcrChannelHome && !lastOcrDetail && !lastOcrPlayer) {
-          pairNote =
-            "\n⚠️ 当前是频道首页（热播榜大卡，评分真实可作候选）：但点大卡会直接播放或进入列表，评分未经详情页复核——不要在此直接点卡播放。更稳路径：点卡/滚动进入列表页（有「最热/高分好评」筛选），在列表页按配对坐标选片，进详情页复核评分与题材后再播放。";
-        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) < MINI_STRIP_Y && Math.round(x) >= 400) {
-          pairNote =
-            "\n⚠️ 顶部 y<150 是热搜榜/片库/搜索条：点热搜条目会打开（可能直接播放）该片，与评分任务无关。回列表滚动读评分挑 ≥9 候选，不要点顶部条目。";
-        } else if (!lastOcrDetail && !lastOcrPlayer && Math.round(y) > 280 && Math.round(x) >= 300) {
-          pairNote =
-            "\n⚠️ 当前屏幕没有评分候选配对（首页/导航页）：腾讯视频首页的「你正在追」/热搜/推荐卡片点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。先点左侧导航「电影」（x≈200, y≈370）进入评分列表，再按配对坐标点片名；不要在首页点卡片。";
-        }
+        const guard = buildClickGuard({
+          x: Math.round(x),
+          y: Math.round(y),
+          verb: "双击",
+          pairs: lastListPairs,
+          miniPlayingTitle,
+          lastOcrDetail,
+          lastOcrList,
+          lastOcrChannelHome,
+          lastOcrPlayer,
+        });
+        if (guard.setSortVerify) pendingSortVerify = true;
+        if (guard.blocked) return { result: guard.blocked, state };
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
           if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 10) };
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${pairNote}${sortVerifyReminder()}`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${sortVerifyReminder()}`, state };
       }
       case "drag": {
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
