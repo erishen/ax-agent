@@ -327,6 +327,30 @@ test("ratingText: player timestamps never qualify (length bound)", () => {
   assert.equal(ratingText("9"), null);
 });
 
+test("ratingText: long composite heat-tag+badge words (19:47: 三在追破200万白9.7分)", () => {
+  assert.equal(ratingText("三在追破200万白9.7分"), "9.7");
+  assert.equal(ratingText("在追破300万白9.5分"), "9.5");
+  // Only trusted when the word ENDS in 分 — timestamps/dates/IDs stay out.
+  assert.equal(ratingText("55692999"), null);
+  assert.equal(ratingText("寒1994戰"), null);
+  assert.equal(ratingText("2026FIRST盛典"), null);
+  assert.equal(ratingText("090909209"), null);
+});
+
+test("buildPairs: heat-tag composite badge pairs with the card title (19:47 飞驰人生 9.7)", () => {
+  const words = [
+    W("飞驰人生", 228, 366, 179, 52),
+    W("三在追破200万白9.7分", 235, 436, 178, 20),
+    W("沈腾 尹正 体育竞技", 233, 468, 138, 19),
+    W("你正在追", 86, 196, 62, 19),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(
+    pairs.map((p) => [p.title, p.score]),
+    [["飞驰人生", "9.7"]],
+  );
+});
+
 test("buildPairs: list badge with 白 noise prefix still pairs (19:34 OCR form)", () => {
   // The 19:34 session read the channel-home hero badge as 白9.3分 (star icon
   // → 白). On a LIST page the same noise would have silently dropped a real

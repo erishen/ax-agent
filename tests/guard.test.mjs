@@ -143,6 +143,37 @@ test("guard: nav-home card-zone click (no pairs, y>280, x≥300) → HARD BLOCK 
   assert.match(r.blocked, /左侧导航「电影」/);
 });
 
+test("guard: channel-home hero-card title click → HARD BLOCK (auto-rotate, 19:47)", () => {
+  // pairs exist from the last ocr, but the carousel has rotated by click
+  // time — clicking 吴樾包贝尔 9.0 actually played 飞驰人生 9.7.
+  const r = buildClickGuard({
+    ...base,
+    pairs: [
+      { title: "吴樾包贝尔两代伪钞教父狂飙对决", score: "9.0", x: 362, y: 493 },
+    ],
+    lastOcrChannelHome: true,
+    x: 362,
+    y: 493,
+  });
+  assert.ok(r.blocked, "channel-home hero click must be blocked");
+  assert.match(r.blocked, /轮播/);
+  assert.match(r.blocked, /列表页/);
+});
+
+test("guard: DETAIL-page title click still allowed (no rotation on details)", () => {
+  const r = buildClickGuard({
+    ...base,
+    pairs: [
+      { title: "马腾你别走", score: "9.5", x: 3052, y: 216 },
+    ],
+    lastOcrDetail: true,
+    x: 3052,
+    y: 216,
+  });
+  assert.equal(r.blocked, undefined);
+  assert.match(r.note, /将打开「马腾你别走」/);
+});
+
 test("guard: nav-home LEFT NAV click (x<250) still allowed (电影 entry)", () => {
   const r = buildClickGuard({
     ...base,

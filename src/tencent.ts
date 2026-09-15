@@ -19,10 +19,17 @@ export const RATING_RE = /^(\d[.:]\d)(分)?$/;
  *  (Q:9:99209 / 0:9899209 — 19:34 session) never qualify. Returns the
  *  bare "9.3" form or null. */
 export function ratingText(text: string): string | null {
+  // Badge with OCR noise prefix: 白9.3分 / 9.3分 / 9.3 (hero star icon → 白).
+  // Bounded by length so player timestamps (Q:9:99209 / 0:9899209 — 19:34
+  // session) never qualify.
   const m = text.match(/^\D*(\d[.:]\d)(分)?\D*$/);
-  if (!m) return null;
-  if (text.length > 6) return null;
-  return m[1];
+  if (m && text.length <= 6) return m[1];
+  // Long composite word: heat tag glued to the badge (三在追破200万白9.7分 —
+  // 19:47 session). Only trusted when it ENDS in 分 (a real badge), so
+  // timestamps / dates / IDs are still excluded.
+  const m2 = text.match(/^.*?(\d[.:]\d)分$/);
+  if (m2 && text.length <= 16) return m2[1];
+  return null;
 }
 const TITLE_CHARS = /^[\u4e00-\u9fa5《》·\s0-9A-Za-z]+$/;
 
@@ -194,6 +201,19 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
   if (onTitle && miniPlayingTitle && sharesBigram(onTitle.title, miniPlayingTitle)) {
     return {
       note: `\n（⚠️ 「${onTitle.title}」（评分 ${onTitle.score}）已在顶部小窗播放中——就是刚点开的那部，任务播放已开始。不要再点它/点它的卡片（会重新播放一遍）：按规则 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报）`,
+      setSortVerify: false,
+    };
+  }
+  if (onTitle && opts.lastOcrChannelHome && !opts.lastOcrDetail && !opts.lastOcrPlayer) {
+    // Channel-home hero cards AUTO-ROTATE: the coordinates in `pairs` came
+    // from the last ocr, but by click time the carousel has moved on — the
+    // click lands on the NEXT card and plays it unverified (19:47 session:
+    // clicking 吴樾包贝尔 9.0 @(362,493) actually played 飞驰人生 9.7).
+    return {
+      blocked:
+        `⛔ 当前是频道首页（热播榜大卡，自动轮播）：「${onTitle.title}」（评分 ${onTitle.score}）的坐标来自上次 ocr，轮播后点击会落在另一张卡上并直接播放未复核的片（19:47 会话：点「吴樾包贝尔 9.0」实际播了《飞驰人生》）。` +
+        "大卡评分仅作参考。正确路径：向下滚动进入列表页（出现「最热/高分好评」筛选栏）或点顶部「高分好评」排序，在列表页按配对坐标点片名，进详情页复核评分与题材后再点播放。",
+      note: "",
       setSortVerify: false,
     };
   }
