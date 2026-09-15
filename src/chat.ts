@@ -909,26 +909,24 @@ async function runTool(
         const playerEvidence = /简介|评分|播放第|选集|倍速|杜比|语言|\d{1,2}:\d{2}/.test(joined);
         // Try to name the banner: the title word on the same row, within a
         // moderate distance right/left of the 播放中 marker.
+        const pw = playing ? words.find((w) => /播放中|正在播放/.test(w.text)) : undefined;
         let playingTitle = "";
-        if (playing) {
-          const pw = words.find((w) => /播放中|正在播放/.test(w.text));
-          if (pw) {
-            const near = words
-              .filter(
-                (w) =>
-                  w !== pw &&
-                  Math.abs(w.y - pw.y) <= 24 &&
-                  Math.abs(w.x + w.w / 2 - (pw.x + pw.w / 2)) <= 420 &&
-                  w.text.length >= 2 &&
-                  !/播放中|正在播放|第\d+[集话]|^\d+$/.test(w.text),
-              )
-              .sort(
-                (a, b) =>
-                  Math.abs(a.x + a.w / 2 - (pw.x + pw.w / 2)) -
-                  Math.abs(b.x + b.w / 2 - (pw.x + pw.w / 2)),
-              )[0];
-            if (near) playingTitle = `「${near.text}」`;
-          }
+        if (pw) {
+          const near = words
+            .filter(
+              (w) =>
+                w !== pw &&
+                Math.abs(w.y - pw.y) <= 24 &&
+                Math.abs(w.x + w.w / 2 - (pw.x + pw.w / 2)) <= 420 &&
+                w.text.length >= 2 &&
+                !/播放中|正在播放|第\d+[集话]|^\d+$/.test(w.text),
+            )
+            .sort(
+              (a, b) =>
+                Math.abs(a.x + a.w / 2 - (pw.x + pw.w / 2)) -
+                Math.abs(b.x + b.w / 2 - (pw.x + pw.w / 2)),
+            )[0];
+          if (near) playingTitle = `「${near.text}」`;
         }
         // Quality hint: many low-confidence / garbled words usually mean the
         // page is mid-transition (loading, animation, overlay) — telling the
@@ -942,11 +940,17 @@ async function runTool(
         // render the play control as an unlabeled image button the OCR can't
         // name — tell the model where to look / how to fall back to keyboard.
         // 「立即播放」is NOT a detail marker: the resume toast on the home
-        // page shows it too, which would mis-fire this hint.
-        const inDetail = !playing && /简介|评分|播放第|第\d+集/.test(joined);
-        const playHint = inDetail
-          ? "\n（详情页播放按钮多为无文字的绿色大按钮，位于片名/简介行的下方或右侧；OCR 识别不到按钮文字时，可先按空格键尝试播放，或对按钮区域再 ocr 一次）"
-          : "";
+        // page shows it too, which would mis-fire this hint. Gate the
+        // coordinate on detail-like content; OCR renders detail ratings as
+        // 「9.0分」, not the literal 「评分」.
+        const detailLike = /简介|评分|播放第|第\d+集|\d\.\d分/.test(joined);
+        const playBtn = detailLike ? words.find((w) => /立即播放/.test(w.text)) : undefined;
+        const inDetail = !playing && detailLike;
+        const playHint = playBtn
+          ? `\n（详情页「立即播放」按钮在 (${Math.round(playBtn.x + playBtn.w / 2)}, ${Math.round(playBtn.y + playBtn.h / 2)})：评分达标就点它开始播放，随后 ocr 确认播放器控件（选集/倍速/进度条/时间码）出现再 done）`
+          : inDetail
+            ? "\n（详情页播放按钮多为无文字的绿色大按钮，位于片名/简介行的下方或右侧；OCR 识别不到按钮文字时，可先按空格键尝试播放，或对按钮区域再 ocr 一次）"
+            : "";
         // Resume-dialog hint: Tencent Video opens a "继续播放之前关闭的 N 个视频"
         // toast over the home page. Clicking home cards underneath (stale
         // resume items) either starts playing something the user had closed or
@@ -955,10 +959,18 @@ async function runTool(
         const dialogHint = resume
           ? "\n（检测到「继续播放」弹窗：先点击 OCR 中「关闭」或「立即播放」的坐标处理掉它，再操作首页其他内容——直接点首页卡片可能误播你之前关闭的视频。注意：点「关闭」后顶部若出现「播放中」小窗，那是应用自动恢复播放之前关闭的视频，不是你的点击所致，与任务无关可忽略或按空格暂停）"
           : "";
+        // 「播放中」position decides what it means. In the top strip
+        // (y<140, Tencent's mini-player / resume banner) it is the app
+        // auto-resuming a previously closed video — NOT evidence the task
+        // film is playing, even when a rated detail page is on screen.
+        // Only a 播放中 marker in the page body counts as playback proof.
+        const miniPlayer = pw !== undefined && pw.y < 140;
         const playingHint = playing
-          ? playerEvidence
-            ? `\n（检测到「播放中」标记：${playingTitle}视频已在播放页播放，按规则立即 done 汇报，不要再点击）`
-            : `\n（顶部出现「播放中」小窗${playingTitle}：关闭「继续播放」弹窗后应用常会自动恢复之前关闭的视频。这【不是】目标任务已播放的证据——若与任务无关，忽略它继续操作，或按空格暂停，不要据此 done）`
+          ? miniPlayer
+            ? `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成）`
+            : playerEvidence
+              ? `\n（检测到「播放中」标记：${playingTitle}视频已在播放页播放，按规则立即 done 汇报，不要再点击）`
+              : `\n（检测到「播放中」标记${playingTitle}但缺少播放器证据：先确认是否真在播放（时间码/选集/倍速控件），若只是页面残留标记则继续任务）`
           : "";
         // List/channel page without any rating digits: the model tends to
         // re-click filter tabs (already selected) instead of scrolling to
