@@ -296,6 +296,29 @@ where
     }
 }
 
+/// Frontend child-index paths arrive as `u32`; the AX walkers use `usize`.
+/// Single conversion point for the ~9 commands that take a `path`.
+fn u32_path(path: &[u32]) -> Vec<usize> {
+    path.iter().map(|p| *p as usize).collect()
+}
+
+/// Convert the frontend path and run `f` through [`with_relocate`] — the
+/// shared skeleton of the five path-addressed commands that support
+/// relocation (`ax_perform_action` / `ax_set_value` / `ax_set_position` /
+/// `ax_resize_window` / `ax_focus_element`).
+fn with_path_relocate<F>(
+    pid: i32,
+    path: Vec<u32>,
+    hint: &Option<RelocateHint>,
+    f: F,
+) -> Result<(), String>
+where
+    F: Fn(&[usize]) -> Result<(), String>,
+{
+    let path = u32_path(&path);
+    with_relocate(pid, &path, hint, f)
+}
+
 /// Perform `action` (e.g. "AXPress") on the element addressed by `path`.
 /// The path is the list of child indices from the app root, as captured in
 /// the frontend while building the tree.
@@ -313,8 +336,7 @@ pub fn ax_perform_action(
     action: String,
     relocate: Option<RelocateHint>,
 ) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    with_relocate(pid, &path, &relocate, |fresh| {
+    with_path_relocate(pid, path, &relocate, |fresh| {
         ax_core::perform_action_for_path(pid, fresh, &action)
     })
 }
@@ -338,8 +360,7 @@ pub fn ax_set_value(
     text: String,
     relocate: Option<RelocateHint>,
 ) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    with_relocate(pid, &path, &relocate, |fresh| {
+    with_path_relocate(pid, path, &relocate, |fresh| {
         ax_act::set_value_for_path(pid, fresh, &text)
     })
 }
@@ -359,8 +380,7 @@ pub fn ax_set_position(
     y: f64,
     relocate: Option<RelocateHint>,
 ) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    with_relocate(pid, &path, &relocate, |fresh| {
+    with_path_relocate(pid, path, &relocate, |fresh| {
         ax_act::set_position_for_path(pid, fresh, x, y)
     })
 }
@@ -380,8 +400,7 @@ pub fn ax_resize_window(
     h: f64,
     relocate: Option<RelocateHint>,
 ) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    with_relocate(pid, &path, &relocate, |fresh| {
+    with_path_relocate(pid, path, &relocate, |fresh| {
         ax_act::resize_window_for_path(pid, fresh, w, h)
     })
 }
@@ -419,8 +438,7 @@ pub fn ax_focus_element(
     path: Vec<u32>,
     relocate: Option<RelocateHint>,
 ) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
-    with_relocate(pid, &path, &relocate, |fresh| {
+    with_path_relocate(pid, path, &relocate, |fresh| {
         ax_act::focus_element_for_path(pid, fresh)
     })
 }
@@ -447,7 +465,7 @@ pub fn ax_read_attribute(
     path: Vec<u32>,
     attr: String,
 ) -> Result<Option<String>, String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
+    let path = u32_path(&path);
     ax_act::read_attribute_for_path(pid, &path, &attr)
 }
 
@@ -588,7 +606,7 @@ fn capture_window_png(
                     .size
                     .filter(|(w, h)| *w > 0.0 && *h > 0.0)
                     .ok_or("窗口没有可用尺寸（AX 与 CGWindowList 都拿不到），无法定位 OCR 坐标")?;
-                let path_u: Vec<usize> = win.path.iter().map(|p| *p as usize).collect();
+                let path_u = u32_path(&win.path);
                 let window_number = ax_act::read_attribute_for_path(pid, &path_u, "AXWindowNumber")
                     .ok()
                     .and_then(|s| s.and_then(|s| s.trim().parse::<i64>().ok()))
@@ -788,6 +806,13 @@ mod ocr_mapping_tests {
         assert_eq!(pixel_to_screen(500.0, 2690.0, 1345.0, 1941.0), 2191.0);
         assert_eq!(pixel_to_screen(0.0, 100.0, 50.0, 10.0), 10.0);
     }
+
+    #[test]
+    fn u32_path_converts_and_preserves_order() {
+        assert_eq!(u32_path(&[]), Vec::<usize>::new());
+        assert_eq!(u32_path(&[0, 1, 2]), vec![0, 1, 2]);
+        assert_eq!(u32_path(&[7, 42, 65535]), vec![7, 42, 65535]);
+    }
 }
 
 /// Synthetic scroll-wheel event at a global screen point (points; most apps
@@ -808,7 +833,7 @@ pub fn ax_scroll(x: f64, y: f64, lines: f64, pid: Option<i32>) -> Result<(), Str
 /// Stale path or the element does not support `AXScrollToVisible`.
 #[tauri::command(async)]
 pub fn ax_scroll_to_visible(pid: i32, path: Vec<u32>) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
+    let path = u32_path(&path);
     ax_act::scroll_to_visible_for_path(pid, &path)
 }
 
@@ -819,7 +844,7 @@ pub fn ax_scroll_to_visible(pid: i32, path: Vec<u32>) -> Result<(), String> {
 /// Stale path or the element does not implement the action.
 #[tauri::command(async)]
 pub fn ax_named_action(pid: i32, path: Vec<u32>, action: String) -> Result<(), String> {
-    let path: Vec<usize> = path.into_iter().map(|p| p as usize).collect();
+    let path = u32_path(&path);
     ax_act::named_action_for_path(pid, &path, &action)
 }
 

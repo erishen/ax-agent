@@ -48,6 +48,13 @@ import {
 } from "./api";
 import type { AxAppInfo, AxNode, OcrScreenWord } from "./types";
 import { TencentUiState } from "./tencent-ui";
+import {
+  NAV_WORDS,
+  garbledOcrNote,
+  navWordNote,
+  resolveWindowPlacement,
+  type ScreenInfo,
+} from "./tool-utils.ts";
 import type { MenuEntry } from "./api";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
 import { invoke } from "@tauri-apps/api/core";
@@ -720,10 +727,6 @@ async function runTool(
             state,
           };
         }
-        const NAV_WORDS = [
-          "首页", "电影", "电视剧", "综艺", "动漫", "少儿", "你正在追",
-          "VIP会员", "片库", "NBA", "短剧", "小游戏", "纪录片", "体育",
-        ];
         const deadline = Date.now() + timeout * 1000;
         let lastOutline = state.outline;
         let lastWords: OcrScreenWord[] = [];
@@ -754,10 +757,7 @@ async function runTool(
                 : "";
               // Nav words are always visible — matching one does not prove a
               // page switch, and the model must not treat it as one.
-              const navWarn =
-                !gone && NAV_WORDS.some((w) => ocrText.includes(w))
-                  ? `\n注意：「${ocrText}」是导航栏常驻词，出现不代表页面已切换——请用 ocr 确认目标页特征（频道页的筛选栏/返回键、影片名）后再继续。`
-                  : "";
+              const navWarn = navWordNote(ocrText, gone);
               return {
                 result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}${navWarn}`,
                 state,
@@ -803,13 +803,7 @@ async function runTool(
             ? `\n注意：「${ocrText}」是导航栏常驻词，几乎任何页面都有，等它出现无法证明页面切换。` +
               "应等页面切换后才会出现的特征词：频道页的筛选栏（最热/最新/高分好评/类型）、影片名、评分数字等。"
             : "";
-        const lowConfWords = lastWords.filter((w) => w.confidence < 0.5).length;
-        const garbledHint =
-          lastWords.length > 3 &&
-          (lowConfWords / lastWords.length > 0.5 || lowConfWords >= 10)
-            ? `\n⚠️ 当前 OCR 质量差（大量乱码词），页面可能在加载/动画中，或窗口被遮挡/未在前台。` +
-              "建议：wait_for 1-2s 后重扫；若持续乱码，尝试 move_window maximize 或确认目标应用在前台。"
-            : "";
+        const garbledHint = garbledOcrNote(lastWords);
         return {
           result: `${tail}${navHint}${garbledHint}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
           state,
@@ -913,45 +907,25 @@ async function runTool(
         let screenIdx = 0;
         const position = str("position");
         if (position) {
-          // 语义摆放：主屏边界 + 窗口当前尺寸换算坐标。
-          let parsed: Array<{
-            index: number;
-            origin: [number, number];
-            size: [number, number];
-          }> = [];
+          // 语义摆放：主屏边界 + 窗口当前尺寸换算坐标（纯函数，可测）。
+          let parsed: ScreenInfo[] = [];
           try {
             parsed = JSON.parse(await desktopToolExec("screen_info", {}));
           } catch {
             /* 屏幕信息解析失败则报错 */
           }
-          if (!parsed.length) {
-            return { result: `无法读取屏幕信息来换算 position=${position}，请改用 x/y`, state };
-          }
-          const want = Number(args.screen);
-          screenIdx = Number.isInteger(want) ? want : 0;
-          const main = parsed[screenIdx] ?? parsed[0];
           const sb = await windowBounds(state.pid).catch(() => null);
-          const ww = sb ? sb.w : 0;
-          const wh = sb ? sb.h : 0;
-          if (position === "left") {
-            x = main.origin[0];
-            y = main.origin[1];
-          } else if (position === "right") {
-            x = main.origin[0] + main.size[0] - ww;
-            y = main.origin[1];
-          } else if (position === "center") {
-            x = main.origin[0] + (main.size[0] - ww) / 2;
-            y = main.origin[1] + (main.size[1] - wh) / 2;
-          } else if (position === "maximize") {
-            x = main.origin[0];
-            y = main.origin[1];
-            resize = { w: main.size[0], h: main.size[1] };
-          } else {
-            return {
-              result: `未知 position: ${position}（支持 left/right/center/maximize）`,
-              state,
-            };
-          }
+          const placed = resolveWindowPlacement(
+            parsed,
+            typeof args.screen === "number" ? args.screen : undefined,
+            position,
+            sb ? { w: sb.w, h: sb.h } : null,
+          );
+          if (!placed.ok) return { result: placed.error, state };
+          x = placed.placement.x;
+          y = placed.placement.y;
+          resize = placed.placement.resize;
+          screenIdx = placed.placement.screenIdx;
         }
         if (!Number.isFinite(x) || !Number.isFinite(y)) {
           return {
