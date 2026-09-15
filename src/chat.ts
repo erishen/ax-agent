@@ -538,6 +538,17 @@ const DANGER_WORDS = [
 const recentScrolls: { x: number; y: number; sign: number }[] = [];
 
 /**
+ * Recent executed tools, for the blind-click guard. Observation tools
+ * (ocr/wait_for/…) and scrolls reset the "no-observation run": a legitimate
+ * click → observe → click cadence never trips it, while click → click → click
+ * with zero verification does (self-drawn UIs show nothing unless read).
+ */
+type RecentMove =
+  | { kind: "observe" | "scroll" | "other" }
+  | { kind: "click"; x: number; y: number };
+const recentMoves: RecentMove[] = [];
+
+/**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
  * desktop when the model guesses out-of-window coordinates. Returns the
@@ -990,11 +1001,12 @@ async function runTool(
         }
         return {
           result:
-            position === "maximize"
+            (position === "maximize"
               ? `窗口已最大化铺满 ${screenIdx === 0 ? "主屏" : `显示器 ${screenIdx}`}`
               : `窗口已移到 (${Math.round(x)}, ${Math.round(y)})${
                   resize ? ` 并调整到 ${resize.w}x${resize.h}` : ""
-                }${screenIdx === 0 ? "" : `（显示器 ${screenIdx}）`}`,
+                }${screenIdx === 0 ? "" : `（显示器 ${screenIdx}）`}`) +
+            "\n布局已变化：先 ocr 复核各元素当前位置再操作（最大化/移动动画期间的点击可能落空，且旧坐标已失效）。",
           state,
         };
       }
@@ -1009,7 +1021,10 @@ async function runTool(
         if (!win) {
           // 自绘 UI / 树里没有窗口节点：pid 级兜底。
           await resizeWindowByPid(state.pid, w, h);
-          return { result: `窗口已调整为 ${w}x${h}（pid 级）`, state };
+          return {
+            result: `窗口已调整为 ${w}x${h}（pid 级）\n布局已变化：先 ocr 复核各元素当前位置再操作（旧坐标已失效）。`,
+            state,
+          };
         }
         const prev = await readAttribute(state.pid, win.path, "AXSize").catch(() => null);
         await resizeWindow(state.pid, win.path, w, h, {
@@ -1019,7 +1034,10 @@ async function runTool(
         state = prev && prev.includes("w:")
           ? { ...state, undo: { kind: "set_size", pid: state.pid, path: win.path, prev, label: "窗口" } }
           : state;
-        return { result: `窗口已调整为 ${w}x${h}`, state };
+        return {
+          result: `窗口已调整为 ${w}x${h}\n布局已变化：先 ocr 复核各元素当前位置再操作（旧坐标已失效）。`,
+          state,
+        };
       }
       case "element_at": {
         let hit;
@@ -1508,6 +1526,61 @@ async function runSteps(
           recentSigs.push(sig);
           if (recentSigs.length > 4) recentSigs.shift();
         }
+        // Blind-click guard: clicking without ever re-reading the screen.
+        // Exact-signature dedup above is dodged by micro-adjusting coordinates
+        // (115,318 → 118,320), and self-drawn UIs (Tencent Video etc.) render
+        // nothing into the AX tree, so the model literally cannot see the
+        // result of a click unless it ocr/wait_for. If the current run —
+        // clicks since the last observe/scroll/other — reaches 3 clicks with
+        // no observation in between, block and demand a re-read.
+        const isClickTool =
+          call.function.name === "click_at" || call.function.name === "double_click_at";
+        const cx = isClickTool && typeof args.x === "number" ? Number(args.x) : null;
+        const cy = isClickTool && typeof args.y === "number" ? Number(args.y) : null;
+        if (isClickTool && cx !== null && cy !== null) {
+          const run: { x: number; y: number }[] = [];
+          for (let i = recentMoves.length - 1; i >= 0; i--) {
+            const m = recentMoves[i];
+            if (m.kind === "click") run.push({ x: m.x, y: m.y });
+            else break;
+          }
+          run.push({ x: cx, y: cy });
+          if (run.length >= 3) {
+            const allNear = run.every((p) =>
+              run.every((q) => Math.abs(p.x - q.x) <= 60 && Math.abs(p.y - q.y) <= 60),
+            );
+            const hint = allNear
+              ? `您已在同一区域连续点击 ${run.length} 次（坐标相距 ≤60pt），且期间没有任何观察。\n` +
+                "点击后页面毫无变化的原因排查（自绘 UI 不读屏就看不见）：\n" +
+                "1. 目标已不在该坐标（窗口移动/最大化/滚动后布局变了）→ 先 ocr 找导航项当前位置；\n" +
+                "2. 点击被弹窗/覆盖层挡住 → 先 ocr 找「关闭/取消」；\n" +
+                "3. 页面切换有延迟 → 用 wait_for text=页面特征词（勿用导航栏恒在的词）等待。\n" +
+                "请先 ocr 复核现状再决定下一步，不要继续盲点同一位置。"
+              : `您已连续点击 ${run.length} 次且中间没有任何 ocr/wait_for 验证。` +
+                "自绘 UI 中每步点击后都应观察：\n" +
+                "- 点完先 wait_for text=目标页面特征词 或 ocr，确认真的切换了；\n" +
+                "- 页面无变化就换坐标/换方式，不要连续盲点。";
+            const seq = `${seqBase + steps + 1}/${budget}`;
+            const heading = stepHeading(seq, call.function.name, args);
+            const stepId = nextId++;
+            working = commit({
+              ...working,
+              messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, hint) }],
+            });
+            llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: hint });
+            continue;
+          }
+        }
+        if (isClickTool && cx !== null && cy !== null) {
+          recentMoves.push({ kind: "click", x: cx, y: cy });
+        } else if (OBSERVE_TOOLS.has(call.function.name)) {
+          recentMoves.push({ kind: "observe" });
+        } else if (call.function.name === "scroll") {
+          recentMoves.push({ kind: "scroll" });
+        } else {
+          recentMoves.push({ kind: "other" });
+        }
+        if (recentMoves.length > 8) recentMoves.shift();
         const seq = `${seqBase + steps + 1}/${budget}`;
         const heading = stepHeading(seq, call.function.name, args);
         const stepId = nextId++;
