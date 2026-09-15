@@ -756,6 +756,75 @@ body {
   margin: 0.7em 0;
 }
 
+/* Heading hierarchy reads better with a hairline under h1, and list markers /
+   table rows get subtle accent so structured replies scan quickly. */
+.md h1 {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.28em;
+}
+
+.md ul li::marker,
+.md ol li::marker {
+  color: var(--accent);
+}
+
+.md li > p {
+  margin: 0.15em 0;
+}
+
+.md table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.md a:hover {
+  text-decoration: underline;
+}
+
+/* ---- Tool-step execution cards (distinct from prose replies) ---- */
+
+.step {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.step-head {
+  padding: 0.42rem 0.8rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.86rem;
+}
+
+.step-head .md p {
+  margin: 0;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.step-head code {
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--accent-2);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 5px;
+  padding: 0.05em 0.4em;
+  font-size: 0.84em;
+}
+
+.step-result {
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 /* example chips row */
 .chat-examples {
   display: flex;

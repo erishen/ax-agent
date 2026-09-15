@@ -136,6 +136,46 @@ function SettingsModal({
   );
 }
 
+/**
+ * LLM replies sometimes contain raw HTML (<br>, <b>, <p>, <code>, …).
+ * react-markdown v10 does NOT parse HTML — the tags stay visible as literal
+ * text, which reads as broken formatting. Map the common tags to Markdown
+ * and strip everything else (no rehype-raw: we never render raw HTML, so no
+ * XSS surface). Applies to prose replies only; tool-step results render
+ * inside <pre> and never pass through here.
+ */
+function normalizeMarkdown(s: string): string {
+  return s
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<strong>/gi, "**")
+    .replace(/<\/strong>/gi, "**")
+    .replace(/<b>/gi, "**")
+    .replace(/<\/b>/gi, "**")
+    .replace(/<em>/gi, "*")
+    .replace(/<\/em>/gi, "*")
+    .replace(/<i>/gi, "*")
+    .replace(/<\/i>/gi, "*")
+    .replace(/<code>/gi, "`")
+    .replace(/<\/code>/gi, "`")
+    .replace(/<h([1-6])>/gi, (_m, n: string) => "#".repeat(Number(n)) + " ")
+    .replace(/<\/h[1-6]>/gi, "")
+    .replace(/<li>/gi, "\n- ")
+    .replace(/<\/li>/gi, "")
+    .replace(/<p>/gi, "\n")
+    .replace(/<\/p>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+\n/g, "\n");
+}
+
+/**
+ * A tool-step bubble built by withStepResult(): a heading line like
+ * `🤖 3/25 \`ocr\` app=腾讯视频` followed by a fenced code block holding the
+ * raw tool output. Render it as an execution card (heading + scrollable
+ * monospace result) instead of feeding coordinates/JSON through the GFM
+ * parser, where stray pipes could look like table syntax.
+ */
+const STEP_RE = /^(🤖[^\n]*)\n+```\n?([\s\S]*?)```$/;
+
 /** Chat-style session view: the primary way to drive apps. */
 export default function ChatView() {
   const [session, setSession] = useState<SessionState>(() => {
@@ -254,9 +294,29 @@ export default function ChatView() {
               }`}
             >
               {m.role === "assistant" ? (
-                <div className="md">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
-                </div>
+                (() => {
+                  const step = STEP_RE.exec(m.text);
+                  if (step) {
+                    // Tool-step execution card: heading line + raw result.
+                    return (
+                      <div className="step">
+                        <div className="step-head">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {normalizeMarkdown(step[1])}
+                          </ReactMarkdown>
+                        </div>
+                        <pre className="step-result">{step[2]}</pre>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="md">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {normalizeMarkdown(m.text)}
+                      </ReactMarkdown>
+                    </div>
+                  );
+                })()
               ) : (
                 <p>{m.text}</p>
               )}
