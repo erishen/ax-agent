@@ -103,6 +103,16 @@ export function setPosition(
   return invoke("ax_set_position", { pid, path, x, y, relocate: relocate ?? null });
 }
 
+/** Pid-level window move: needs no outline path (self-drawn UIs). */
+export function moveWindowByPid(pid: number, x: number, y: number): Promise<void> {
+  return invoke("ax_move_window", { pid, x, y });
+}
+
+/** Pid-level window resize: needs no outline path (self-drawn UIs). */
+export function resizeWindowByPid(pid: number, w: number, h: number): Promise<void> {
+  return invoke("ax_resize_window_pid", { pid, w, h });
+}
+
 /** Resize a window via AXSize (points). */
 export function resizeWindow(
   pid: number,

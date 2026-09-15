@@ -35,6 +35,8 @@ import {
   pressKey,
   readAttribute,
   resizeWindow,
+  resizeWindowByPid,
+  moveWindowByPid,
   rightClickAt,
   scrollAt,
   scrollToVisible,
@@ -828,13 +830,26 @@ async function runTool(
         }
         // Detect strong playback evidence so the model stops poking around.
         const playing = /播放中|正在播放/.test(joined);
+        // Quality hint: many low-confidence / garbled words usually mean the
+        // page is mid-transition (loading, animation, overlay) — telling the
+        // model to re-scan after a beat instead of trusting the noise.
+        const cjk = (s: string) => (s.match(/[\u4e00-\u9fa5]/g) || []).length;
+        const lowConf = words.filter((w) => w.confidence < 0.5).length;
+        const garble = words.filter(
+          (w) => w.confidence < 0.5 && cjk(w.text) / Math.max(w.text.length, 1) < 0.3,
+        ).length;
+        const qualityNote =
+          words.length > 3 && (lowConf / words.length > 0.6 || garble >= 3)
+            ? "\n⚠️ 识别质量差（大量低置信/乱码词）：页面可能在加载、有动画或遮罩层。建议 wait_for 1-2s 后再 ocr，或滚动到稳定画面。"
+            : "";
         return {
           result:
             `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}` +
             (pairs.length ? `\n\n【评分-片名配对】（点片名坐标打开详情，不会错位）：\n${pairs.join("\n")}` : "") +
             (playing
               ? "\n（检测到「播放中」标记：视频已在播放，按规则立即 done 汇报，不要再点击）"
-              : ""),
+              : "") +
+            qualityNote,
           state,
         };
       }
@@ -894,7 +909,6 @@ async function runTool(
       case "move_window": {
         if (state.pid === null) return { result: "尚未选择应用", state };
         const win = state.outline.find((n) => n.role === "AXWindow");
-        if (!win) return { result: "没有窗口节点", state };
         let x = Number(args.x);
         let y = Number(args.y);
         let resize: { w: number; h: number } | null = null;
@@ -947,20 +961,26 @@ async function runTool(
             state,
           };
         }
-        const prev = await readAttribute(state.pid, win.path, "AXPosition").catch(() => null);
-        await setPosition(state.pid, win.path, Math.round(x), Math.round(y), {
-          role: win.role,
-          label: win.label,
-        });
-        if (resize) {
-          await resizeWindow(state.pid, win.path, resize.w, resize.h, {
+        if (win) {
+          const prev = await readAttribute(state.pid, win.path, "AXPosition").catch(() => null);
+          await setPosition(state.pid, win.path, Math.round(x), Math.round(y), {
             role: win.role,
             label: win.label,
           });
+          if (resize) {
+            await resizeWindow(state.pid, win.path, resize.w, resize.h, {
+              role: win.role,
+              label: win.label,
+            });
+          }
+          state = prev && prev.includes("x:")
+            ? { ...state, undo: { kind: "set_position", pid: state.pid, path: win.path, prev, label: "窗口" } }
+            : state;
+        } else {
+          // 自绘 UI / 树里没有窗口节点：退化到 pid 级窗口操作（AXWindows 第一个窗口）。
+          await moveWindowByPid(state.pid, Math.round(x), Math.round(y));
+          if (resize) await resizeWindowByPid(state.pid, resize.w, resize.h);
         }
-        state = prev && prev.includes("x:")
-          ? { ...state, undo: { kind: "set_position", pid: state.pid, path: win.path, prev, label: "窗口" } }
-          : state;
         return {
           result:
             position === "maximize"
@@ -979,7 +999,11 @@ async function runTool(
           return { result: "w/h 必须是正数（points）", state };
         }
         const win = state.outline.find((n) => n.role === "AXWindow");
-        if (!win) return { result: "没有窗口节点", state };
+        if (!win) {
+          // 自绘 UI / 树里没有窗口节点：pid 级兜底。
+          await resizeWindowByPid(state.pid, w, h);
+          return { result: `窗口已调整为 ${w}x${h}（pid 级）`, state };
+        }
         const prev = await readAttribute(state.pid, win.path, "AXSize").catch(() => null);
         await resizeWindow(state.pid, win.path, w, h, {
           role: win.role,
@@ -1423,7 +1447,14 @@ async function runSteps(
           /* treat as empty args */
         }
         const argsSig = (call.function.arguments || "{}").replace(/\s+/g, " ");
-        const sig = `${call.function.name} ${argsSig}`;
+        // Result of these tools does not depend on their arguments in a way
+        // that matters once a session app is pinned (ocr app=… is redundant
+        // when the session already targets that pid) — matching by name alone
+        // stops the model from bypassing the loop guard with a no-op extra arg.
+        const NAME_ONLY_SIG = new Set(["ocr", "screen_info", "frontmost_app", "list_apps"]);
+        const sig = NAME_ONLY_SIG.has(call.function.name)
+          ? call.function.name
+          : `${call.function.name} ${argsSig}`;
         if (recentSigs.includes(sig)) {
           // Loop guard: the model just ran this exact operation (possibly a
           // few calls ago). Don't re-execute — prompt it to check the state.

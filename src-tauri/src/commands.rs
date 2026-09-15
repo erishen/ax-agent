@@ -386,6 +386,26 @@ pub fn ax_resize_window(
     })
 }
 
+/// Move the app's first window via `AXPosition` — pid-level fallback that
+/// needs no outline path (self-drawn UIs / freshly launched apps).
+///
+/// # Errors
+/// Untrusted process, no window, or AXPosition unsupported.
+#[tauri::command(async)]
+pub fn ax_move_window(pid: i32, x: f64, y: f64) -> Result<(), String> {
+    ax_act::move_window_for_pid(pid, x, y)
+}
+
+/// Resize the app's first window via `AXSize` — pid-level fallback that
+/// needs no outline path (self-drawn UIs / freshly launched apps).
+///
+/// # Errors
+/// Untrusted process, no window, or the element cannot be resized.
+#[tauri::command(async)]
+pub fn ax_resize_window_pid(pid: i32, w: f64, h: f64) -> Result<(), String> {
+    ax_act::resize_window_for_pid(pid, w, h)
+}
+
 /// Grab keyboard focus for the element (`AXFocused = true`).
 ///
 /// When the path is stale and `relocate` carries the element's role/label,

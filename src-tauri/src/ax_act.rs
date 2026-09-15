@@ -334,6 +334,64 @@ pub fn resize_window_for_path(pid: i32, path: &[usize], w: f64, h: f64) -> Resul
     }
 }
 
+/// Locate the app's first `AXWindow` element directly from its window list,
+/// bypassing outline paths — self-drawn UIs and freshly-launched apps may
+/// have no usable tree path yet while still exposing their window element.
+///
+/// # Errors
+/// Untrusted process, no window, or an AX messaging failure.
+fn first_window_for_pid(pid: i32) -> Result<CFRetained<AXUIElement>, String> {
+    if !is_process_trusted(false) {
+        return Err("未授予辅助功能权限 (Accessibility permission not granted)".to_string());
+    }
+    unsafe {
+        let app = AXUIElement::new_application(pid);
+        let _ = app.set_messaging_timeout(2.0);
+        let value = copy_attribute(&app, "AXWindows")
+            .map_err(|e| format!("读取 AXWindows 失败: {}", ax_error_description(e)))?
+            .ok_or_else(|| "应用没有窗口 (AXWindows 不存在)".to_string())?;
+        let array = value
+            .downcast_ref::<CFArray>()
+            .ok_or_else(|| "AXWindows 不是数组".to_string())?;
+        let typed = array.cast_unchecked::<AXUIElement>();
+        typed.get(0).ok_or_else(|| "应用没有可见窗口".to_string())
+    }
+}
+
+/// Move the app's first window by setting `AXPosition` — pid-level, no path.
+///
+/// # Errors
+/// Untrusted process, no window, or AXPosition unsupported.
+pub fn move_window_for_pid(pid: i32, x: f64, y: f64) -> Result<(), String> {
+    let element = first_window_for_pid(pid)?;
+    unsafe {
+        let point = CGPoint { x, y };
+        let Some(value) = AXValue::new(AXValueType::CGPoint, NonNull::from(&point).cast()) else {
+            return Err("AXValue::new(CGPoint) 返回空".to_string());
+        };
+        let result = set_attribute(&element, "AXPosition", &*value);
+        drop(value);
+        result
+    }
+}
+
+/// Resize the app's first window by setting `AXSize` — pid-level, no path.
+///
+/// # Errors
+/// Untrusted process, no window, or the element cannot be resized.
+pub fn resize_window_for_pid(pid: i32, w: f64, h: f64) -> Result<(), String> {
+    let element = first_window_for_pid(pid)?;
+    unsafe {
+        let size = CGSize { width: w, height: h };
+        let Some(value) = AXValue::new(AXValueType::CGSize, NonNull::from(&size).cast()) else {
+            return Err("AXValue::new(CGSize) 返回空".to_string());
+        };
+        let result = set_attribute(&element, "AXSize", &*value);
+        drop(value);
+        result
+    }
+}
+
 /// Grab keyboard focus by setting `AXFocused = true`.
 ///
 /// # Errors
