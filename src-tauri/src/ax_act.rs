@@ -513,14 +513,18 @@ fn ansi_keycode(c: char) -> Option<CGKeyCode> {
     })
 }
 
-/// Send a created event — to a target pid when given (CGEventPostToPid,
-/// delivered to that process regardless of foreground), otherwise to the HID
-/// tap (which routes to whatever has keyboard/mouse focus).
-fn post_event(event: &CGEvent, target: Option<i32>) {
-    match target {
-        Some(pid) => event.post_to_pid(pid),
-        None => event.post(CGEventTapLocation::HID),
-    }
+/// Send a created event through the HID event tap, so it travels the same
+/// pipeline as real input: window hit-testing routes mouse events to the
+/// app that owns the point and keyboard events to the focused app.
+///
+/// The `target` pid is deliberately NOT used for CGEventPostToPid anymore —
+/// self-drawn / game-like apps (Tencent Video, Electron canvas, …) ignore
+/// directed events, while HID-posted ones always reach them. Callers run
+/// `frontmost_guard(pid)` first, so the target owns the foreground when the
+/// event lands; the pid is kept in the signature to keep call sites honest
+/// about intent (and to allow reverting to directed posting later).
+fn post_event(event: &CGEvent, _target: Option<i32>) {
+    event.post(CGEventTapLocation::HID);
 }
 
 /// Post a key-down/key-up pair for `keycode` with the given modifier flags

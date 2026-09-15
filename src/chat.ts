@@ -679,6 +679,14 @@ async function runTool(
         const pid = state.pid;
         if (pid === null)
           return { result: "尚未选择应用，先用 open_app 打开一个", state };
+        if (!keyword && !ocrText) {
+          return {
+            result:
+              "wait_for 未指定目标，仅报告界面是否变化（不推荐：空等待常是浪费步数）。" +
+              "请给 element（等 AX 元素出现/消失）或 text（等屏幕文字出现/消失，自绘 UI 用）后再等。",
+            state,
+          };
+        }
         const deadline = Date.now() + timeout * 1000;
         let lastOutline = state.outline;
         let lastWords: OcrScreenWord[] = [];
@@ -983,7 +991,19 @@ async function runTool(
         return { result: `窗口已调整为 ${w}x${h}`, state };
       }
       case "element_at": {
-        const hit = await elementAt(Number(args.x) || 0, Number(args.y) || 0);
+        let hit;
+        try {
+          hit = await elementAt(Number(args.x) || 0, Number(args.y) || 0);
+        } catch (e) {
+          const msg = String(e);
+          if (msg.includes("-25208")) {
+            return {
+              result: `element_at 在该位置失败（错误 -25208 = 应用不实现辅助功能 API，典型自绘 UI）。这个应用请改用 ocr 读界面、click_at 操作，element_at/read_screen 对它不可用。`,
+              state,
+            };
+          }
+          throw e;
+        }
         let pathLine = "";
         try {
           const traced = await tracePath(Number(args.x) || 0, Number(args.y) || 0);
@@ -1083,7 +1103,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
       case "double_click_at": {
         const rawX = Number(args.x);
@@ -1333,9 +1353,12 @@ async function runSteps(
     /* probe failed → fall back to the static prompt */
   }
 
-  // Signature of the last executed tool call; repeating it back-to-back means
-  // the model is stuck in a loop (see the guard inside the tool loop).
-  let lastToolSig: string | null = null;
+  // Signatures of recently executed tool calls; repeating one (even with
+  // other calls in between) means the model is stuck in a loop — clicking
+  // the same self-drawn UI target over and over without re-reading. Kept to
+  // the last 4 so a legitimate repeated action (same key twice, etc.) still
+  // slips through after a few other steps.
+  let recentSigs: string[] = [];
 
   for (let steps = 0; steps < budget; steps += 1) {
     if (stopRequested) {
@@ -1401,14 +1424,14 @@ async function runSteps(
         }
         const argsSig = (call.function.arguments || "{}").replace(/\s+/g, " ");
         const sig = `${call.function.name} ${argsSig}`;
-        if (sig === lastToolSig) {
-          // Loop guard: the model is repeating the exact same operation it just
-          // ran. Don't re-execute — prompt it to check the current state instead.
+        if (recentSigs.includes(sig)) {
+          // Loop guard: the model just ran this exact operation (possibly a
+          // few calls ago). Don't re-execute — prompt it to check the state.
           const hint =
-            "您在前一步已执行过完全相同的操作（工具与参数一致）。不要重复执行。\n" +
-            "请先用 find（或 read_screen 加 filter）确认界面现状：\n" +
+            `您最近已执行过完全相同的操作（工具与参数一致）：${sig}。不要原样重试。\n` +
+            "请先确认界面现状（自绘 UI 用 ocr；AX 树用 read_screen 加 filter）：\n" +
             "- 若用户目标已经客观达成 → 直接用 done 汇报并结束；\n" +
-            "- 若未达成 → 换一种操作推进，不要原样重试。";
+            "- 若未达成 → 换一种操作推进（改坐标、换工具、先滚动/等待），不要重复点击同一位置。";
           const seq = `${seqBase + steps + 1}/${budget}`;
           const heading = stepHeading(seq, call.function.name, args);
           const stepId = nextId++;
@@ -1419,7 +1442,8 @@ async function runSteps(
           llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: hint });
           continue;
         }
-        lastToolSig = sig;
+        recentSigs.push(sig);
+        if (recentSigs.length > 4) recentSigs.shift();
         const seq = `${seqBase + steps + 1}/${budget}`;
         const heading = stepHeading(seq, call.function.name, args);
         const stepId = nextId++;

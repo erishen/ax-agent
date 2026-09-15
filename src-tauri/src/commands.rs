@@ -830,9 +830,9 @@ pub fn ax_type_keys(text: String, pid: Option<i32>) -> Result<(), String> {
 /// Left single-click at a global screen point (synthetic CGEvent mouse).
 /// For widgets with no AX element at all.
 ///
-/// `pid` (session app) targets the events straight at that process via
-/// CGEventPostToPid — works even when the app is not frontmost; without it,
-/// clicks go to whatever is currently frontmost.
+/// `pid` (session app) is brought frontmost first; the click then goes
+/// through the HID event tap, so hit-testing routes it to the app that owns
+/// the point — reliable even for self-drawn UIs that ignore directed events.
 ///
 /// # Errors
 /// Untrusted process, or the CG event failed.
@@ -872,11 +872,11 @@ pub fn ax_right_click(x: f64, y: f64, pid: Option<i32>) -> Result<(), String> {
     ax_act::right_click_at_position(x, y, pid)
 }
 
-/// Synthetic mouse/keyboard can target the session app directly via
-/// `CGEventPostToPid` (no foreground requirement), but aiming at the frontmost
-/// app is still the most natural path for scroll/focus-dependent apps — so we
-/// bring the target frontmost when possible, and never block on failure (the
-/// targeted post below handles the backgrounded case).
+/// Synthetic mouse/keyboard events all go through the HID event tap (the
+/// same pipeline as real input); aiming at the frontmost app is the natural
+/// path for scroll/focus-dependent apps — so we bring the target frontmost
+/// when possible, and never block on failure (a backgrounded target simply
+/// doesn't receive the event, which the agent verifies via ocr/read_screen).
 fn frontmost_guard(pid: Option<i32>) -> Result<(), String> {
     let Some(want) = pid else {
         return Ok(());
@@ -898,7 +898,8 @@ fn frontmost_guard(pid: Option<i32>) -> Result<(), String> {
         }
     }
     // Activation failed (target app refuses focus, background-only phase, …).
-    // Not fatal: the caller posts events straight to `want` via postToPid.
+    // Not fatal: the caller's event goes to HID anyway, so it simply lands on
+    // whatever is frontmost — the agent notices via ocr/read_screen.
     Ok(())
 }
 
