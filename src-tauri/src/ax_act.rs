@@ -228,9 +228,9 @@ unsafe fn set_attribute<T: AsRef<CFType>>(
     value: &T,
 ) -> Result<(), String> {
     // Main-thread hop (WebKit background-thread crash guard). AXUIElement is
-    // not Send; cross the hop as raw pointers (both stay alive here).
-    let owned = element.clone();
-    let raw = &*owned as *const AXUIElement as usize;
+    // not Send; cross the hop as raw pointers (both stay alive for the
+    // duration of the synchronous call).
+    let raw = element as *const AXUIElement as usize;
     let value_ptr = value.as_ref() as *const CFType as usize;
     let attribute = attribute.to_string();
     crate::ax_core::run_on_main(move || unsafe {
@@ -273,8 +273,7 @@ pub fn read_attribute_for_path(
 /// into a friendly message by the caller.
 fn is_settable(element: &AXUIElement, attribute: &str) -> Option<bool> {
     // Main-thread hop (WebKit background-thread crash guard).
-    let owned = element.clone();
-    let raw = &*owned as *const AXUIElement as usize;
+    let raw = element as *const AXUIElement as usize;
     let attribute = attribute.to_string();
     crate::ax_core::run_on_main(move || unsafe {
         let name = CFString::from_str(&attribute);
@@ -427,9 +426,9 @@ pub fn focus_element_for_path(pid: i32, path: &[usize]) -> Result<(), String> {
 /// element does not implement the action.
 pub fn named_action_for_path(pid: i32, path: &[usize], action: &str) -> Result<(), String> {
     let element = element_at_path(pid, path)?;
-    // Main-thread hop (WebKit background-thread crash guard).
-    let owned = element.clone();
-    let raw = &*owned as *const AXUIElement as usize;
+    // Main-thread hop (WebKit background-thread crash guard). `element` is a
+    // CFRetained held here; it stays alive for the synchronous call.
+    let raw = &*element as *const AXUIElement as usize;
     let action = action.to_string();
     crate::ax_core::run_on_main(move || unsafe {
         let name = CFString::from_str(&action);

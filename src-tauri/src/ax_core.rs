@@ -510,12 +510,12 @@ pub(crate) fn copy_attribute(
 ) -> Result<Option<CFRetained<CFType>>, AXError> {
     // Hop to the main thread: querying a WKWebView app from a background
     // thread crashes the whole process (WebKit main-thread-only guard).
-    // AXUIElement is not Send, so cross the hop as a raw pointer; `owned`
-    // stays alive for the duration of the synchronous call. The result
+    // AXUIElement is not Send, so cross the hop as a raw pointer. The
+    // caller's reference stays alive for the duration of the synchronous
+    // call (run_on_main blocks until the main thread returns). The result
     // crosses back as a plain pointer address (the +1 Copy-rule retain is
     // re-wrapped into CFRetained on this thread).
-    let owned = element.clone();
-    let raw = &*owned as *const AXUIElement as usize;
+    let raw = element as *const AXUIElement as usize;
     let attribute = attribute.to_string();
     let ptr = run_on_main(move || unsafe {
         let element = &*(raw as *const AXUIElement);
@@ -558,8 +558,7 @@ pub(crate) fn copy_multiple_attributes(
     // not Send; cross the hop as a raw pointer (see copy_attribute). The batch
     // result also crosses as pointers: the array's +1 Copy-rule retain and
     // each element's +1 get-retain are re-wrapped into CFRetained here.
-    let owned = element.clone();
-    let raw = &*owned as *const AXUIElement as usize;
+    let raw = element as *const AXUIElement as usize;
     let names: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
     let (array_ptr, items) = run_on_main(move || unsafe {
         let element = &*(raw as *const AXUIElement);
@@ -600,8 +599,6 @@ pub(crate) fn copy_multiple_attributes(
 
     // Re-wrap both retains on this thread; ownership is now exact again.
     let array = unsafe { CFRetained::from_raw(NonNull::new_unchecked(array_ptr as *mut CFArray)) };
-    // SAFETY: every entry of the batch result is a CFTypeRef (some kCFNull).
-    let typed = unsafe { array.cast_unchecked::<CFType>() };
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         match item {
@@ -622,8 +619,7 @@ pub(crate) fn copy_multiple_attributes(
 /// Copy the list of actions this element supports (e.g. AXPress, AXIncrement).
 pub(crate) fn copy_action_names(element: &AXUIElement) -> Vec<String> {
     // Main-thread hop (WebKit background-thread crash guard).
-    let owned = element.clone();
-    let raw = &*owned as *const AXUIElement as usize;
+    let raw = element as *const AXUIElement as usize;
     run_on_main(move || unsafe {
         let element = &*(raw as *const AXUIElement);
         let mut raw_array: *const CFArray = std::ptr::null();
