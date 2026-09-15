@@ -534,6 +534,9 @@ const DANGER_WORDS = [
   "永久删除", "清空聊天", "确认支付", "付款",
 ];
 
+/** Recent scrolls (clamped x/y + direction), for bounce detection. */
+const recentScrolls: { x: number; y: number; sign: number }[] = [];
+
 /**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
@@ -1052,6 +1055,20 @@ async function runTool(
         const clamped = await clampToWindow(state.pid, x, y);
         x = clamped.x;
         y = clamped.y;
+        // 来回滚动检测：同一坐标先向下再向上（或反之）是无效操作——内容
+        // 回到原位，白白消耗步数。发现则拦下并提示换思路。
+        const sign = lines > 0 ? 1 : -1;
+        const bounced = recentScrolls.some(
+          (s) => Math.abs(s.x - x) < 4 && Math.abs(s.y - y) < 4 && s.sign === -sign,
+        );
+        recentScrolls.push({ x, y, sign });
+        if (recentScrolls.length > 4) recentScrolls.shift();
+        if (bounced) {
+          return {
+            result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行，但注意到你刚刚在同一位置向反方向滚过——来回滚动不会带来新内容。先 read_screen/ocr 看当前界面，确定要朝哪个方向翻页、翻到哪里，再一次性滚动到位。`,
+            state,
+          };
+        }
         await scrollAt(x, y, lines, state.pid ?? undefined);
         return {
           result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}如需查看新内容请 read_screen 或 find。`,
@@ -1447,13 +1464,23 @@ async function runSteps(
           /* treat as empty args */
         }
         const argsSig = (call.function.arguments || "{}").replace(/\s+/g, " ");
-        // Result of these tools does not depend on their arguments in a way
-        // that matters once a session app is pinned (ocr app=… is redundant
-        // when the session already targets that pid) — matching by name alone
-        // stops the model from bypassing the loop guard with a no-op extra arg.
-        const NAME_ONLY_SIG = new Set(["ocr", "screen_info", "frontmost_app", "list_apps"]);
-        const sig = NAME_ONLY_SIG.has(call.function.name)
-          ? call.function.name
+        // Observation tools never trip the loop guard: re-reading the screen
+        // after an action is the correct verification loop (results change),
+        // so ocr/read_screen/screen_info/frontmost_app/list_apps/wait_for are
+        // exempt. The guard exists for ACTION tools — repeating the same
+        // mutation (same click/scroll/type) is where the model gets stuck.
+        const OBSERVE_TOOLS = new Set([
+          "ocr",
+          "read_screen",
+          "screen_info",
+          "frontmost_app",
+          "list_apps",
+          "wait_for",
+          "find",
+          "element_at",
+        ]);
+        const sig = OBSERVE_TOOLS.has(call.function.name)
+          ? ""
           : `${call.function.name} ${argsSig}`;
         if (recentSigs.includes(sig)) {
           // Loop guard: the model just ran this exact operation (possibly a
@@ -1473,8 +1500,10 @@ async function runSteps(
           llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: hint });
           continue;
         }
-        recentSigs.push(sig);
-        if (recentSigs.length > 4) recentSigs.shift();
+        if (sig) {
+          recentSigs.push(sig);
+          if (recentSigs.length > 4) recentSigs.shift();
+        }
         const seq = `${seqBase + steps + 1}/${budget}`;
         const heading = stepHeading(seq, call.function.name, args);
         const stepId = nextId++;
