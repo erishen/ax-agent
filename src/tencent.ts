@@ -85,6 +85,10 @@ export interface PairCandidate {
   score: string;
   x: number;
   y: number;
+  /** True when score came from a detail-page verification, not the list
+   * badge (badge OCR is unreliable — 16:51 session: badges paired as
+   * 9.0/9.8/9.1 while the films are ~8.3). */
+  verified?: boolean;
 }
 
 /** Pair each high-confidence rating with the title text of the same
@@ -93,10 +97,12 @@ export interface PairCandidate {
  * neighbouring poster (the 8.7-film-instead-of-9.1 bug).
  *
  * Returns candidates only; the caller owns the module state (lastListPairs
- * / seenTitles). */
+ * / seenTitles). verifiedScores (title → score confirmed on a detail page)
+ * OVERRIDE the badge value: a detail page is the only trustworthy rating
+ * source, so a verified score wins even when the badge OCR disagrees. */
 export function buildPairs(
   words: OcrScreenWord[],
-  opts: { seenTitles: string[]; detailPage: boolean },
+  opts: { seenTitles: string[]; detailPage: boolean; verifiedScores?: Map<string, string> },
 ): PairCandidate[] {
   const cx = (w: OcrScreenWord) => w.x + w.w / 2;
   const seen = opts.seenTitles;
@@ -139,11 +145,13 @@ export function buildPairs(
       // The user already watched this film (mini-player resume, 你正在追
       // history): it must not be offered as the pick.
       if (seen.some((s) => sharesBigram(t, s))) continue;
+      const verified = opts.verifiedScores?.get(t);
       out.push({
         title: t,
-        score: r.text.replace("分", ""),
+        score: verified ?? r.text.replace("分", ""),
         x: Math.round(title.t.x + title.t.w / 2),
         y: Math.round(title.t.y + title.t.h / 2),
+        verified: verified !== undefined,
       });
     }
   }

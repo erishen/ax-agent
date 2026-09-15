@@ -53,6 +53,7 @@ import {
   detectPage,
   parseMiniTitle,
   sharesBigram,
+  type PairCandidate,
 } from "./tencent";
 import type { MenuEntry } from "./api";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
@@ -596,7 +597,7 @@ let elementAtFails = 0;
  * neighbouring film (the 8.7-instead-of-9.1 bug), so a click that misses
  * every paired title gets a corrective hint before it fires.
  */
-let lastListPairs: Array<{ title: string; score: string; x: number; y: number }> = [];
+let lastListPairs: PairCandidate[] = [];
 
 /**
  * List-page OCRs in a row without a high-confidence rating digit. The model
@@ -651,6 +652,10 @@ let seenTitles: string[] = [];
  */
 let miniPlayingTitle = "";
 let lastOcrChannelHome = false;
+// Detail-page verified ratings (title → score): the only trustworthy
+// rating source. Overrides unreliable list badges when pairing (16:51
+// session: badges paired as 9.0/9.8/9.1 while the films are ~8.3).
+let detailVerifiedScores = new Map<string, string>();
 
 /** True when a and b share a ≥2-char run (「抓特务」vs OCR 残字「扒特务」
  * share 「特务」). Used to match film titles across OCR noise. */
@@ -766,6 +771,7 @@ async function runTool(
         pendingSortVerify = false;
         miniPlayingTitle = "";
         lastOcrChannelHome = false;
+        detailVerifiedScores = new Map<string, string>();
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -975,10 +981,28 @@ async function runTool(
         lastOcrChannelHome = channelHome;
         lastOcrList = listPage;
         let pairs: string[] = [];
+        // A detail page is the one trustworthy rating source: capture the
+        // verified (title → score) so list badges can be overridden when
+        // the model returns to the list (16:51: badges lied).
+        if (detailPage && rating) {
+          const dt = words.find((w) => /简介[＞>〉]/.test(w.text));
+          if (dt) {
+            const name = parseMiniTitle(dt.text.replace(/[^，。\s]*简介[＞>〉].*$/, ""));
+            if (name.length >= 2) {
+              detailVerifiedScores.set(name, rating.text.replace("分", ""));
+            }
+          }
+        }
         lastListPairs =
           rating && !watchedPage && !homeLike
-            ? buildPairs(words, { seenTitles, detailPage })
+            ? buildPairs(words, { seenTitles, detailPage, verifiedScores: detailVerifiedScores })
             : [];
+        for (const p of lastListPairs) {
+          pairs.push(
+            `「${p.title}」评分 ${p.score} 分${p.verified ? "（详情页已复核）" : ""} → 点片名坐标 (${p.x}, ${p.y})`,
+          );
+        }
+        pairs = [...new Set(pairs)].slice(0, 6);
         // Tell the model why a rated card may be missing from the pairs —
         // it is a watched film, not an OCR miss.
         const seenOnScreen = seenTitles.filter((s) =>

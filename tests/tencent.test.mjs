@@ -254,6 +254,29 @@ test("buildPairs: NAV words (片库/VIP会员/你正在追) are never titles", (
   assert.equal(pairs.length, 0);
 });
 
+test("buildPairs: detail-verified score overrides an unreliable badge (16:51: badge 9.0, film ~8.3)", () => {
+  // The badge OCR lies (9.0); the detail page confirmed 8.3 earlier.
+  const words = [
+    W("我看见两朵一样的云", 440, 840, 140, 17),
+    W("9.0", 450, 870, 30, 15),
+  ];
+  const verified = new Map([["我看见两朵一样的云", "8.3"]]);
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false, verifiedScores: verified });
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].score, "8.3", "verified score must win over the badge");
+  assert.equal(pairs[0].verified, true);
+});
+
+test("buildPairs: unverified pair is flagged as badge-sourced", () => {
+  const words = [
+    W("洛杉矶劫案", 490, 840, 70, 17),
+    W("8.3", 510, 870, 30, 15),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.equal(pairs[0].score, "8.3");
+  assert.equal(pairs[0].verified, false);
+});
+
 // -------------------------------------------------------------- parseMiniTitle
 
 test("parseMiniTitle: II prefix stripped (16:51: 'II 两朵一样的云')", () => {
