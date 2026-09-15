@@ -1,0 +1,111 @@
+// Agent configuration: the static policy constants (system prompt, danger
+// words, roles, step budget) and the pure decision helpers built on them.
+// Extracted from chat.ts — none of this needs session state or IO, so it is
+// unit-testable without mocks (the dangerousReason branches and the prompt
+// assembly used to live inline in a 1000+-line dispatcher with no coverage).
+
+/** Tool-step card regex: a 🤖 heading followed by a fenced code block. */
+export const STEP_RE = /^(🤖[^\n]*)\n+```\n?([\s\S]*?)```$/;
+
+/** AX roles the model may click/type into (used to filter interactive nodes). */
+export const ROLE_INTERACTIVE = new Set([
+  "AXWindow",
+  "AXButton",
+  "AXTextField",
+  "AXTextArea",
+  "AXCheckBox",
+  "AXRadioButton",
+  "AXLink",
+  "AXMenuButton",
+  "AXPopUpButton",
+  "AXSearchField",
+  "AXSlider",
+  "AXTabGroup",
+  "AXList",
+  "AXTable",
+  "AXRow",
+  "AXCell",
+  "AXImage",
+]);
+
+/** System prompt for the macOS computer-use agent (step discipline rules). */
+export const SYSTEM_PROMPT = [
+  "你是 macOS 计算机使用助手（AX Explorer）。你通过工具控制真实的应用界面。",
+  "步数是稀缺资源（每段任务只有有限步），严格遵守：",
+  "1. 不要反复 read_screen。open_app 成功后已返回完整界面大纲；之后每次 click/type_text 都会自动刷新大纲并在结果里注明。",
+  "2. 定位元素优先用 find <关键词>（搜索当前大纲，不产生新界面读取）；只在确实需要看新界面时才 read_screen，且可用 filter 参数只看一类元素。",
+  "3. 相互独立的小操作（如依次点击列表里的联系人）可以连续执行，不需要每步都重新读界面。",
+  "4. 用关键词定位元素时，优先用按钮/字段的原文标题。",
+  "5. 长列表（聊天记录、联系人、文件列表）看不到目标时用 scroll 在该区域滚动；已知元素在列表里但点不到时用 scroll_to；增减数值（音量/数量/日期步进）优先用 named_action 的 AXIncrement/AXDecrement 而不是反复点击。滚动/步进后不要立即整页重读，先 find 目标。",
+  "6. 输入分两种：type_text 语义写入（整段替换 AXValue，无逐键反应）；type_keys 逐键合成键盘输入（触发随输入即搜索/自动补全/聊天输入框的反应），输入前先 focus 目标框，需要提交/发送时再 key enter。Esc 关弹窗、Cmd+F 开搜索、方向键在自定义列表导航——这些键盘驱动的界面没有 AX 动作，用 key。",
+  "7. 合成鼠标是最后手段：click_at / double_click_at / drag / right_click_at 只用于既没有 AX 动作、element_at 也探测不到元素的自绘控件（画布、地图、拖动滑块），且目标应用必须在最前台。优先级永远是 menu_bar/menu_click > named_action > click（语义） > click_at（坐标）；坐标点击前先 element_at 确认那里确实没有 AX 元素。",
+  "8. 菜单驱动的操作（导出、全屏、偏好设置、格式转换、置顶等）优先用 menu_bar + menu_click（语义操作，不占真实鼠标），比在界面上猜按钮更稳；右键菜单场景先 right_click_at 再 read_screen 点菜单项。",
+  "9. 动手前先看一眼大纲；有变化且看不准时再读一次。",
+  "10. 全部完成后用 done 工具向用户简短汇报（中文）；无法完成时也用 done 说明原因，不要编造界面元素。",
+  "11. 系统消息里的「tsm-hub 技能库」列出了网关挂载的 Agent Skills（写文案/代码审查/周报等超出界面操作的能力）。需要时直接按该技能的说明执行；若某技能需要网关侧执行（skill-run），把需求交给网关处理即可，不要凭空调用不存在的工具。",
+  "12. 本地工具分两类：clipboard_set/clipboard_get/notify/open_url/speak/screen_info/frontmost_app 是 macOS 桌面能力（决定窗口坐标前先 screen_info）；mcp_local_* 前缀的是本机 MCP 服务器工具，按其描述使用。",
+  "13. 涉及发送消息、删除、支付等不可逆操作时必须先停下向用户确认。",
+  "14. 不要重复已完成的操作：上一个工具的结果已显示目标达成（目标元素已出现、值已正确设置、窗口已移动、文本已输入）时，绝不要原样再执行一次。重复不推进任务，只会浪费步数。",
+  "15. 完成的标准是「用户要求的结果已在界面上客观成立、可验证」。一旦成立就立刻调用 done 汇报并结束，不要画蛇添足（不要为凑步数继续 read_screen、继续点击）。不确定时才验证一次，通过就 done。",
+  "16. 遇到自绘 UI（read_screen 一片匿名按钮/图像，像腾讯视频客户端）时改用 ocr 工具：对窗口截图做文字识别并返回屏幕坐标，然后用 click_at/type_keys 操作。自绘 UI 点击没有 AX 回执：每点一次坐标后必须再 ocr 一次确认界面变了（文字/布局变化）才能继续下一步；同一个坐标连点 2 次无变化就要停下换思路（换坐标、先滚动、或用键盘导航），不要盲目换坐标乱点。",
+  "17. 视频类应用的「确认在播放」判定：OCR 顶栏/标题出现「播放中」字样、或画面出现暂停按钮/进度条/时间码等播放器控件，即为已播放的客观证据，立即用 done 汇报，不要再点击别处（每多点一次都可能把播放暂停或跳走）。发现已在播放后，后续动作全部取消。",
+  "18. 选片必须两步验证：①列表页 OCR 看到「评分 N.N」只说明大概位置——评分徽标与海报可能错位、且低置信(30%)的乱码评分（如 $9:3）不可信，只认置信≥50% 的干净数字；②点开候选影片的详情页后必须再 ocr 一次，确认详情页上该片评分确实满足要求，才点「立即播放」。详情页评分不达标就返回换下一部。报告时以详情页看到的评分为准。点击影片时点片名文字的中心坐标（配对清单里有），不要点评分或海报边缘——会错开到旁边的影片。",
+  "19. 帮用户挑选内容（电影/剧/音乐/商品）时，记忆要点：用户资料库里没有现成的「观影偏好」条目。正确姿势是 ①用 profile_search 检索画像锚点（职业经历、年龄、人格特征、工作强度），②基于画像推断口味，③与平台行为信号（「你正在追/继续观看」、历史、热搜常驻题材）交叉验证，④推荐时给出「基于你 XX 画像/习惯推断」的理由。已知画像锚点：（画像只来自 profile_search 的返回，此处不硬编码用户身份）",
+].join("\n");
+
+/** Keywords whose click/action targets are usually irreversible. */
+export const DANGER_WORDS = [
+  "删除", "移除", "清空", "清除", "发送", "群发", "提交", "退出登录",
+  "注销", "退出群聊", "移除成员", "冻结", "封禁", "卸载", "格式化",
+  "永久删除", "清空聊天", "确认支付", "付款",
+];
+
+/** Why a tool call needs user confirmation, or "" if it's safe. */
+export function dangerousReason(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case "key": {
+      const combo = String(args.combo ?? "").toLowerCase();
+      if (/(enter|return)/.test(combo)) {
+        return "回车键可能触发发送/提交/删除等不可逆动作，需要你确认。";
+      }
+      return "";
+    }
+    case "click":
+    case "named_action":
+    case "menu_click": {
+      const keyword = String(args.keyword ?? args.action ?? "").toLowerCase();
+      if (DANGER_WORDS.some((w) => keyword.toLowerCase().includes(w))) {
+        return `操作目标疑似不可逆动作（「${keyword}」），需要你确认。`;
+      }
+      // Native window chrome (traffic-light) buttons: pressing 关闭/最小化
+      // closes/minimizes the WHOLE app window — usually not what an agent
+      // wants when hunting for an in-app control. Confirm first.
+      if (/(关闭按钮|最小化按钮)/.test(keyword)) {
+        return `「${keyword}」是系统窗口按钮，会关闭/最小化整个应用窗口，需要你确认是否真的这么做。`;
+      }
+      return "";
+    }
+    default:
+      return "";
+  }
+}
+
+/** Hard step budget per agent run (each step = 1 model turn + its tool executions). */
+export const MAX_AGENT_STEPS = 25;
+
+/** One auto-continue nudge injected between segments (also used by resume). */
+export const CONTINUE_NUDGE = "继续：从上一步停下的地方接着完成目标，做完后用 done 汇报。";
+
+/**
+ * The "current environment limits" appendix appended to the system prompt:
+ * lists each un-granted permission as a tool that will fail — so the model
+ * stops burning steps discovering errors mid-task. Pure: missing[] fully
+ * determines the text.
+ */
+export function environmentLimitNote(missing: string[]): string {
+  if (!missing.length) return "";
+  return (
+    "\n\n【当前环境限制】以下工具在本机未授权，调用必然失败，不要浪费步数尝试：\n" +
+    missing.map((m) => `- ${m}`).join("\n")
+  );
+}
