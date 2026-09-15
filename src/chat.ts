@@ -875,9 +875,15 @@ async function runTool(
         const rating = words.find(
           (w) => RATING.test(w.text) && w.confidence >= 0.5,
         );
+        // 「你正在追」/ history page: cards carry viewing-progress tags and
+        // clicking one RESUME-PLAYS it directly instead of opening a detail
+        // page. Its ratings are for films the user already watched — not a
+        // high-score candidate pool. Suppress pairing so the model is not
+        // steered into clicking a watched film, and warn explicitly.
+        const watchedPage = /观看至\s*\d+\s*%|已看完|继续观看/.test(joined);
         let pairs: string[] = [];
         lastListPairs = [];
-        if (rating) {
+        if (rating && !watchedPage) {
           const cx = (w: OcrScreenWord) => w.x + w.w / 2;
           for (const r of words) {
             if (!RATING.test(r.text) || r.confidence < 0.5) continue;
@@ -965,6 +971,12 @@ async function runTool(
         const dialogHint = resume
           ? "\n（检测到「继续播放」弹窗：先点击 OCR 中「关闭」或「立即播放」的坐标处理掉它，再操作首页其他内容——直接点首页卡片可能误播你之前关闭的视频。注意：点「关闭」后顶部若出现「播放中」小窗，那是应用自动恢复播放之前关闭的视频，不是你的点击所致，与任务无关可忽略或按空格暂停）"
           : "";
+        // 「你正在追」history page guard: clicking a card resume-plays it
+        // (no detail page, no rating re-check) and its scores are for films
+        // the user already watched — not the high-score candidate pool.
+        const watchedHint = watchedPage
+          ? "\n（检测到「你正在追/历史观看」页（观看至N%/已看完标签）：这些是你追过的剧，评分不代表高分新片池，点击卡片会【直接续播】而不会打开详情页。任务要挑高分电影：回到「电影」频道列表页并切「高分好评」排序（或点开候选片详情页复核），不要在本页点卡片播放）"
+          : "";
         // 「播放中」position decides what it means. In the top strip
         // (y<140, Tencent's mini-player / resume banner) it is the app
         // auto-resuming a previously closed video — NOT evidence the task
@@ -1012,6 +1024,7 @@ async function runTool(
             playingHint +
             playHint +
             dialogHint +
+            watchedHint +
             listHint +
             qualityNote,
           state,
