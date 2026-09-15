@@ -66,8 +66,10 @@ import {
 import {
   argsText,
   asText,
+  filterMenu,
   friendlyLlmError,
   parseCommand,
+  renderMenu,
   stepHeading,
   withStepResult,
 } from "./tool-utils.ts";
@@ -78,7 +80,6 @@ import {
   resolveWindowPlacement,
   type ScreenInfo,
 } from "./tool-utils.ts";
-import type { MenuEntry } from "./api";
 import type { OutlineNode } from "./types.ts";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
 import { invoke } from "@tauri-apps/api/core";
@@ -479,6 +480,23 @@ async function clampToWindow(
   return { x, y, note: "" };
 }
 
+/** Re-dump the outline after an action, keeping the old one on failure. */
+async function refreshOutline(state: SessionState, depth = 10): Promise<SessionState> {
+  if (state.pid === null) return state;
+  try {
+    return { ...state, outline: await treeOf(state.pid, depth) };
+  } catch {
+    return state;
+  }
+}
+
+/** Strict numeric x/y arg parsing (null when missing or non-numeric). */
+function coordArgs(args: Record<string, unknown>): { x: number; y: number } | null {
+  const x = Number(args.x);
+  const y = Number(args.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
 /** Execute one tool call against the session; returns JSON result text. */
 async function runTool(
   state: SessionState,
@@ -711,11 +729,7 @@ async function runTool(
         if (!target) return { result: `没有找到「${str("keyword")}」，先 read_screen`, state };
         if (!target.actions.length) return { result: `元素「${target.label}」不支持动作`, state };
         await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
-        try {
-          state = { ...state, outline: await treeOf(state.pid, 10) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state);
         return { result: `已点击「${target.label}」（${target.actions[0]}）。界面大纲已自动更新，无需重复 read_screen。`, state };
       }
       case "type_text": {
@@ -961,22 +975,14 @@ async function runTool(
           };
         }
         await namedAction(state.pid, target.path, action);
-        try {
-          state = { ...state, outline: await treeOf(state.pid, 10) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state);
         return { result: `已对「${target.label}」执行 ${action}。界面大纲已自动更新。`, state };
       }
       case "key": {
         const combo = str("combo");
         if (!combo) return { result: "缺少 combo 参数（如 enter / esc / Cmd+F）", state };
         await pressKey(combo, state.pid ?? undefined);
-        try {
-          if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 10) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state);
         return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。${tui.sortVerifyReminder()}`, state };
       }
       case "type_keys": {
@@ -989,39 +995,25 @@ async function runTool(
         };
       }
       case "click_at": {
-        const rawX = Number(args.x);
-        const rawY = Number(args.y);
-        if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
-          return { result: "需要数字坐标 x, y", state };
-        }
-        const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
+        const raw = coordArgs(args);
+        if (!raw) return { result: "需要数字坐标 x, y", state };
+        const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
         const guard = tui.clickGuard(Math.round(x), Math.round(y), "单击");
         if (guard.blocked) return { result: guard.blocked, state };
         // Pass the session pid so the guard can auto-refocus the target app
         // before firing (synthetic clicks land on whatever is frontmost).
         await clickAt(x, y, state.pid ?? undefined);
-        try {
-          if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 10) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state);
         return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
       case "double_click_at": {
-        const rawX = Number(args.x);
-        const rawY = Number(args.y);
-        if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) {
-          return { result: "需要数字坐标 x, y", state };
-        }
-        const { x, y, note } = await clampToWindow(state.pid, rawX, rawY);
+        const raw = coordArgs(args);
+        if (!raw) return { result: "需要数字坐标 x, y", state };
+        const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
         const guard = tui.clickGuard(Math.round(x), Math.round(y), "双击");
         if (guard.blocked) return { result: guard.blocked, state };
         await doubleClickAt(x, y, state.pid ?? undefined);
-        try {
-          if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 10) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state);
         return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}`, state };
       }
       case "drag": {
@@ -1055,29 +1047,13 @@ async function runTool(
         let bar = await menuBar(pid ?? undefined, 4);
         let note = "";
         if (keyword) {
-          // 只保留标题含关键词的分支（祖先链保留，path 对 menu_click 仍有效）。
-          const kw = keyword.toLowerCase();
-          const filterMenu = (e: MenuEntry): MenuEntry | null => {
-            const children = e.children
-              .map(filterMenu)
-              .filter((c): c is MenuEntry => c !== null);
-            const self = (e.title || "").toLowerCase().includes(kw);
-            if (!self && !children.length) return null;
-            return { ...e, children: self ? e.children : children };
-          };
-          const filtered = filterMenu(bar);
+          const filtered = filterMenu(bar, keyword);
           if (!filtered) {
             return { result: `菜单栏里没有包含「${keyword}」的项`, state };
           }
           bar = filtered;
           note = `（仅显示包含「${keyword}」的菜单项）`;
         }
-        /** Render one menu tree level: items with paths + submenu titles. */
-        const renderMenu = (entry: MenuEntry, prefix: string): string[] =>
-          entry.children.map((c) => {
-            const line = `${prefix}${c.title || c.role} path=[${c.path.join(",")}]${c.children.length ? ` (子菜单 ${c.children.length} 项)` : ""}`;
-            return [line, ...renderMenu(c, `${prefix}  `)].filter(Boolean);
-          }).flat();
         const lines = [
           `菜单栏（pid ${pid}）${note}：`,
           ...renderMenu(bar, "  "),
@@ -1097,25 +1073,15 @@ async function runTool(
         for (let i = 0; i < path.length; i += 1) {
           await performAction(state.pid, path.slice(0, i + 1), "AXPress");
         }
-        try {
-          state = { ...state, outline: await treeOf(state.pid, 10) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state);
         return { result: `已按路径 [${path.join(",")}] 逐级点击菜单项。界面大纲已自动更新。`, state };
       }
       case "right_click_at": {
-        const x = Number(args.x);
-        const y = Number(args.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          return { result: "需要数字坐标 x, y", state };
-        }
+        const raw = coordArgs(args);
+        if (!raw) return { result: "需要数字坐标 x, y", state };
+        const { x, y } = raw;
         await rightClickAt(x, y, state.pid ?? undefined);
-        try {
-          if (state.pid !== null) state = { ...state, outline: await treeOf(state.pid, 12) };
-        } catch {
-          /* keep old outline */
-        }
+        state = await refreshOutline(state, 12);
         return {
           result: `已在 (${x}, ${y}) 合成右键（目标应用已确认在前台）。上下文菜单已弹出：用 read_screen 找菜单项并 click，或直接 element_at 定位菜单项坐标。`,
           state,

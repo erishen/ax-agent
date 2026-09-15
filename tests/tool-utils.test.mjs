@@ -288,3 +288,56 @@ test("withStepResult: code block, truncates long results", () => {
   assert.ok(big.length < 2000 + 200);
   assert.ok(big.endsWith("```"));
 });
+
+// --- Menu-bar helpers (filterMenu / renderMenu, formerly inline in the
+// menu_bar case with zero coverage) ---
+
+import { filterMenu, renderMenu } from "../src/tool-utils.ts";
+
+const MENU = {
+  title: "File",
+  role: "AXMenuItem",
+  path: [],
+  children: [
+    { title: "New", role: "AXMenuItem", path: [0], children: [] },
+    {
+      title: "Open Recent",
+      role: "AXMenuItem",
+      path: [1],
+      children: [
+        { title: "Report.pdf", role: "AXMenuItem", path: [1, 0], children: [] },
+        { title: "Draft.md", role: "AXMenuItem", path: [1, 1], children: [] },
+      ],
+    },
+    { title: "Export", role: "AXMenuItem", path: [2], children: [] },
+  ],
+};
+
+test("filterMenu: keeps matching branches and their ancestor chain", () => {
+  const out = filterMenu(MENU, "export");
+  assert.ok(out);
+  assert.deepEqual(out.children.map((c) => c.title), ["Export"]);
+  const nested = filterMenu(MENU, "draft");
+  assert.ok(nested);
+  assert.equal(nested.children.length, 1);
+  assert.equal(nested.children[0].title, "Open Recent");
+  assert.deepEqual(nested.children[0].children.map((c) => c.title), ["Draft.md"]);
+});
+
+test("filterMenu: no match → null; case-insensitive", () => {
+  assert.equal(filterMenu(MENU, "zzz"), null);
+  const out = filterMenu(MENU, "REPORT");
+  assert.ok(out);
+  assert.equal(out.children[0].children[0].title, "Report.pdf");
+});
+
+test("renderMenu: indented lines with paths and submenu counts", () => {
+  const lines = renderMenu(MENU, "  ");
+  assert.deepEqual(lines, [
+    "  New path=[0]",
+    "  Open Recent path=[1] (子菜单 2 项)",
+    "    Report.pdf path=[1,0]",
+    "    Draft.md path=[1,1]",
+    "  Export path=[2]",
+  ]);
+});

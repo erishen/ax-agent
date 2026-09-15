@@ -7,6 +7,7 @@
 // coverage, and the 16:43 session showed a wrong maximize landing layout
 // (all old coords stale) and wait_for false-positives on nav words.
 import { truncate } from "./tree-utils.ts";
+import type { MenuEntry } from "./api";
 
 /** One NSScreen entry as returned by the `screen_info` desktop tool. */
 export interface ScreenInfo {
@@ -207,4 +208,31 @@ export function stepHeading(seq: string, name: string, args: Record<string, unkn
 /** Step heading + its result in a code block (the "execution log" bubble). */
 export function withStepResult(heading: string, result: string): string {
   return heading + "\n\n```\n" + truncate(result, 800) + "\n```";
+}
+
+// --- Menu-bar helpers (menu_bar / menu_click, formerly inline in chat.ts) ---
+
+/** Keep only branches whose titles contain the keyword (ancestor chain kept,
+ *  paths stay valid for menu_click). Returns null when nothing matches. */
+export function filterMenu(root: MenuEntry, keyword: string): MenuEntry | null {
+  const kw = keyword.toLowerCase();
+  const walk = (e: MenuEntry): MenuEntry | null => {
+    const children = e.children
+      .map(walk)
+      .filter((c): c is MenuEntry => c !== null);
+    const self = (e.title || "").toLowerCase().includes(kw);
+    if (!self && !children.length) return null;
+    return { ...e, children: self ? e.children : children };
+  };
+  return walk(root);
+}
+
+/** Render one menu tree level: items with paths + submenu titles. */
+export function renderMenu(entry: MenuEntry, prefix: string): string[] {
+  return entry.children
+    .map((c) => {
+      const line = `${prefix}${c.title || c.role} path=[${c.path.join(",")}]${c.children.length ? ` (子菜单 ${c.children.length} 项)` : ""}`;
+      return [line, ...renderMenu(c, `${prefix}  `)].filter(Boolean);
+    })
+    .flat();
 }
