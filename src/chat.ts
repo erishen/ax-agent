@@ -579,6 +579,26 @@ let scrollsSinceRating = 0;
 let lastOcrList = false;
 
 /**
+ * Set when a click lands in the top filter/sort band of a rating-less
+ * list: sort switches can be slow or fail silently, and the model tends
+ * to scroll or click again right after tapping 高分好评 without verifying
+ * (13:35 session: clicked the sort tab, then scrolled/clicked twice more
+ * while the list was still on 最热). The next non-ocr action gets a
+ * reminder to verify with an ocr first; the flag is consumed by the
+ * reminder and cleared by any ocr.
+ */
+let pendingSortVerify = false;
+
+/** One-shot reminder consumed by the next non-ocr action (scroll/click/
+ * key): "you just tapped a sort tab, verify it took effect before acting
+ * again". Returns "" when nothing is pending. */
+function sortVerifyReminder(): string {
+  if (!pendingSortVerify) return "";
+  pendingSortVerify = false;
+  return "\n（⚠️ 你刚点击了排序/筛选标签但还没用 ocr 验证切换是否生效——先 ocr 看顶部排序字样（最热/高分好评）与列表内容是否已变化再继续，不要盲目点击/滚动）";
+}
+
+/**
  * Clamp a screen point into the session target's main window frame, so
  * synthetic scroll/click/drag events never land on another app or the
  * desktop when the model guesses out-of-window coordinates. Returns the
@@ -676,6 +696,7 @@ async function runTool(
         lastListPairs = []; // stale rating pairs from the previous app
         scrollsSinceRating = 0;
         lastOcrList = false;
+        pendingSortVerify = false;
         // First moment the drive target's pid is known: park our window on a
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
@@ -857,6 +878,9 @@ async function runTool(
         const words = await ocrWindow(pid);
         state = { ...state, pid, appName: name };
         if (!words.length) return { result: `${name} 窗口 OCR 未识别到文字（也许是纯图像界面）`, state };
+        // An ocr is exactly the verification a sort-tab click needs; any
+        // pending "verify the sort" reminder is satisfied here.
+        pendingSortVerify = false;
         const joined = words
           .sort((a, b) => a.y - b.y || a.x - b.x)
           .slice(0, 60)
@@ -1033,6 +1057,15 @@ async function runTool(
           !/\d+\.\d/.test(joined) &&
           !playing;
         lastOcrList = listPage;
+        // Recognize the current sort from the channel header, e.g.
+        // 「电影 •最热 •院线电影」/「电影•高分好评•全部电影」. The model
+        // keeps scrolling a 最热 list hunting for badges the sort does not
+        // show, unaware which sort it is on (13:35 session kept scrolling
+        // while the header still said 最热 after tapping 高分好评).
+        const sortLabel =
+          joined.match(/电影\s*[•·]\s*(最热|最新|高分好评)/)?.[1] ??
+          joined.match(/(最热|最新|高分好评)\s*[•·]\s*(院线电影|全部电影|电影)/)?.[1] ??
+          null;
         // Track consecutive rating-less list OCRs so the hint can escalate
         // from "scroll another screen" to "switch sort / open a detail".
         if (rating) {
@@ -1041,11 +1074,13 @@ async function runTool(
           scrollsSinceRating += 1;
         }
         const listHint = listPage
-          ? /最热/.test(joined) && /院线电影|电影•|电视剧•|综艺•/.test(joined)
-            ? "\n（当前是最热排序列表（如「电影•最热•院线电影」），卡片不显示评分徽标——继续滚动也读不到分。直接点顶部「高分好评」标签切换排序（ocr 中有其坐标），或点开候选片详情页用详情页评分筛选）"
-            : scrollsSinceRating >= 2
-              ? `\n（已连续 ${scrollsSinceRating} 次列表页未见评分数字：当前多半是「最热/最新」排序，卡片不显示评分徽标，继续滚动也读不到分。改切「高分好评」排序（ocr 顶部筛选栏该标签坐标），或直接点开候选片详情页用详情页评分筛选；不要继续在同一列表里盲目滚动）`
-              : "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
+          ? sortLabel === "高分好评"
+            ? "\n（当前已切到「高分好评」排序：卡片按评分排列，直接读本屏各卡片评分挑 ≥9 的候选；若本屏评分都 <9 再滚动换屏，不要再切回其他排序）"
+            : sortLabel === "最热" || sortLabel === "最新"
+              ? `\n（当前是「${sortLabel}」排序（如「电影•最热•院线电影」）：该排序下评分参差，部分卡片不显示评分徽标，继续滚动也读不到分。任务要求 ≥9 的高分片：点顶部「高分好评」标签切换（ocr 中有其坐标），或点开候选片详情页用详情页评分筛选；不要在同一列表里反复滚动）`
+              : scrollsSinceRating >= 2
+                ? `\n（已连续 ${scrollsSinceRating} 次列表页未见评分数字：当前多半是「最热/最新」排序，卡片不显示评分徽标，继续滚动也读不到分。改切「高分好评」排序（ocr 顶部筛选栏该标签坐标），或直接点开候选片详情页用详情页评分筛选；不要继续在同一列表里盲目滚动）`
+                : "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
           : "";
         return {
           result:
@@ -1322,13 +1357,26 @@ async function runTool(
           };
         }
         await scrollAt(x, y, lines, state.pid ?? undefined);
+        // The model scrolls away while a qualifying candidate (rating ≥ 9)
+        // from the last OCR was right on screen (13:35 session: 小气鬼 9.1
+        // paired at step 20, then two more scrolls). After the scroll its
+        // coordinates are gone — remind it what it just left behind.
+        const qualified = lastListPairs
+          .filter((p) => {
+            const n = parseFloat(p.score.replace("分", ""));
+            return !Number.isNaN(n) && n >= 9;
+          })
+          .slice(0, 2);
         // 滚动后屏幕内容已移动：任何来自上次 ocr 的评分-片名配对坐标都已
         // 失效。不清空的话 click_at 会用旧坐标提示「将打开 X」而实际点到
         // 滚动后的别的卡片（13:22 会话：滚动后未 ocr 即点狄仁杰坐标，
         // 结果打开的是 8.1 分的定海神针详情页）。
         lastListPairs = [];
+        const qualifiedNote = qualified.length
+          ? `\n⚠️ 注意：滚动前本屏上次 ocr 已有达标候选——${qualified.map((p) => `「${p.title}」评分 ${p.score}（片名坐标 ${p.x},${p.y}）`).join("、")}。如果还没点它，滚动后坐标已失效：先滚回上一屏重新 ocr 定位再点，不要继续滚向更远；评分 <9 不达标才值得继续找。`
+          : "";
         return {
-          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。`,
+          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。${qualifiedNote}${sortVerifyReminder()}`,
           state,
         };
       }
@@ -1375,7 +1423,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。`, state };
+        return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。${sortVerifyReminder()}`, state };
       }
       case "type_keys": {
         const text = str("text");
@@ -1413,10 +1461,12 @@ async function runTool(
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 点击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
-        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 230) {
+        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 330) {
           // No rating pairs on screen (rating-less list): a click in the
-          // top filter/sort band is probably a sort tab. Sorting switches
+          // top filter/sort band is probably a sort tab (the back button
+          // sits at x≈320, so the band starts at 330). Sorting switches
           // (最热/高分好评/类型) can be slow or fail silently — verify.
+          pendingSortVerify = true;
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
         }
@@ -1428,7 +1478,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${pairNote}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${pairNote}${sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
       }
       case "double_click_at": {
         const rawX = Number(args.x);
@@ -1452,9 +1502,10 @@ async function runTool(
           } else if (nearest && nearest.d < 180) {
             pairNote = `\n⚠️ 双击位置 (${px}, ${py}) 不在配对清单的任何片名上——评分徽标/海报边缘会错开到旁边影片。最近候选：「${nearest.p.title}」评分 ${nearest.p.score} 分，片名坐标 (${nearest.p.x}, ${nearest.p.y})。建议改点片名坐标。`;
           }
-        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 230) {
+        } else if (lastOcrList && Math.round(y) <= 280 && Math.round(x) >= 330) {
           pairNote =
             "\n（若点的是排序/筛选标签（最热/高分好评/类型等）：点击后用 ocr 确认顶部排序字样与列表内容已变化，切换/加载可能要 1-2s，必要时 wait_for；点击后 ocr 无变化说明没点中或该项已选中，不要原地重复点击）";
+          pendingSortVerify = true;
         }
         await doubleClickAt(x, y, state.pid ?? undefined);
         try {
@@ -1462,7 +1513,7 @@ async function runTool(
         } catch {
           /* keep old outline */
         }
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${pairNote}`, state };
+        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${pairNote}${sortVerifyReminder()}`, state };
       }
       case "drag": {
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
