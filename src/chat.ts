@@ -712,6 +712,10 @@ async function runTool(
             state,
           };
         }
+        const NAV_WORDS = [
+          "首页", "电影", "电视剧", "综艺", "动漫", "少儿", "你正在追",
+          "VIP会员", "片库", "NBA", "短剧", "小游戏", "纪录片", "体育",
+        ];
         const deadline = Date.now() + timeout * 1000;
         let lastOutline = state.outline;
         let lastWords: OcrScreenWord[] = [];
@@ -740,8 +744,14 @@ async function runTool(
               const where = hit
                 ? ` (${Math.round(hit.x)}, ${Math.round(hit.y)})`
                 : "";
+              // Nav words are always visible — matching one does not prove a
+              // page switch, and the model must not treat it as one.
+              const navWarn =
+                !gone && NAV_WORDS.some((w) => ocrText.includes(w))
+                  ? `\n注意：「${ocrText}」是导航栏常驻词，出现不代表页面已切换——请用 ocr 确认目标页特征（频道页的筛选栏/返回键、影片名）后再继续。`
+                  : "";
               return {
-                result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}`,
+                result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}${navWarn}`,
                 state,
               };
             }
@@ -780,10 +790,6 @@ async function runTool(
             : `界面在 ${timeout}s 内无变化`;
         // Nav words are always on screen — waiting for them proves nothing
         // about page switches and fails hard when OCR garbles the whole bar.
-        const NAV_WORDS = [
-          "首页", "电影", "电视剧", "综艺", "动漫", "少儿", "你正在追",
-          "VIP会员", "片库", "NBA", "短剧", "小游戏", "纪录片", "体育",
-        ];
         const navHint =
           ocrText && !gone && NAV_WORDS.some((w) => ocrText.includes(w))
             ? `\n注意：「${ocrText}」是导航栏常驻词，几乎任何页面都有，等它出现无法证明页面切换。` +
@@ -932,6 +938,16 @@ async function runTool(
             ? `\n（检测到「播放中」标记：${playingTitle}视频已在播放页播放，按规则立即 done 汇报，不要再点击）`
             : `\n（顶部出现「播放中」小窗${playingTitle}：关闭「继续播放」弹窗后应用常会自动恢复之前关闭的视频。这【不是】目标任务已播放的证据——若与任务无关，忽略它继续操作，或按空格暂停，不要据此 done）`
           : "";
+        // List/channel page without any rating digits: the model tends to
+        // re-click filter tabs (already selected) instead of scrolling to
+        // read the per-card ratings. Guide it to scroll / open a detail.
+        const listPage =
+          /〈返回|‹返回|←返回|<返回|›返回/.test(joined) &&
+          !/\d+\.\d/.test(joined) &&
+          !playing;
+        const listHint = listPage
+          ? "\n（当前在列表/频道页且本屏未见评分数字：评分通常显示在卡片下方（如 9.8）。滚动逐屏读取评分挑选高分片；评分不在本屏就再滚一屏，或点开卡片详情页复核。列表出现后不要再反复点击筛选标签，直接滚动读评分）"
+          : "";
         return {
           result:
             `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}` +
@@ -939,6 +955,7 @@ async function runTool(
             playingHint +
             playHint +
             dialogHint +
+            listHint +
             qualityNote,
           state,
         };
@@ -1071,6 +1088,12 @@ async function runTool(
           await moveWindowByPid(state.pid, Math.round(x), Math.round(y));
           if (resize) await resizeWindowByPid(state.pid, resize.w, resize.h);
         }
+        // Self-drawn apps (Tencent Video etc.) often RELOAD the page on
+        // resize/maximize — the 电影 channel opened before the maximize can be
+        // reset back to the home page. Must warn so the model re-navigates.
+        const resetWarn = win
+          ? ""
+          : "\n注意：该应用是自绘 UI（无窗口节点），最大化/移动可能触发它重载页面（如腾讯视频会重置回首页）——之前刚完成的导航可能失效，先用 ocr 确认当前页面，必要时重新导航。";
         return {
           result:
             (position === "maximize"
@@ -1078,7 +1101,8 @@ async function runTool(
               : `窗口已移到 (${Math.round(x)}, ${Math.round(y)})${
                   resize ? ` 并调整到 ${resize.w}x${resize.h}` : ""
                 }${screenIdx === 0 ? "" : `（显示器 ${screenIdx}）`}`) +
-            "\n布局已变化：先 ocr 复核各元素当前位置再操作（最大化/移动动画期间的点击可能落空，且旧坐标已失效）。",
+            "\n布局已变化：先 ocr 复核各元素当前位置再操作（最大化/移动动画期间的点击可能落空，且旧坐标已失效）。" +
+            resetWarn,
           state,
         };
       }
