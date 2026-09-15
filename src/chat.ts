@@ -842,8 +842,39 @@ async function runTool(
           }
           pairs = [...new Set(pairs)].slice(0, 6);
         }
-        // Detect strong playback evidence so the model stops poking around.
+        // Playback evidence must be scoped. 「播放中」appears in two very
+        // different places:
+        //  1) a player page — real task evidence → done;
+        //  2) the top banner strip on the home/channel page. Closing the
+        //     「继续播放」toast makes Tencent Video auto-resume one of the
+        //     previously closed videos, so the banner shows 「播放中 第N集」
+        //     even though the model clicked nothing. Treating that as task
+        //     evidence would finish on the wrong video.
         const playing = /播放中|正在播放/.test(joined);
+        const playerEvidence = /简介|评分|播放第|选集|倍速|杜比|语言|\d{1,2}:\d{2}/.test(joined);
+        // Try to name the banner: the title word on the same row, within a
+        // moderate distance right/left of the 播放中 marker.
+        let playingTitle = "";
+        if (playing) {
+          const pw = words.find((w) => /播放中|正在播放/.test(w.text));
+          if (pw) {
+            const near = words
+              .filter(
+                (w) =>
+                  w !== pw &&
+                  Math.abs(w.y - pw.y) <= 24 &&
+                  Math.abs(w.x + w.w / 2 - (pw.x + pw.w / 2)) <= 420 &&
+                  w.text.length >= 2 &&
+                  !/播放中|正在播放|第\d+[集话]|^\d+$/.test(w.text),
+              )
+              .sort(
+                (a, b) =>
+                  Math.abs(a.x + a.w / 2 - (pw.x + pw.w / 2)) -
+                  Math.abs(b.x + b.w / 2 - (pw.x + pw.w / 2)),
+              )[0];
+            if (near) playingTitle = `「${near.text}」`;
+          }
+        }
         // Quality hint: many low-confidence / garbled words usually mean the
         // page is mid-transition (loading, animation, overlay) — telling the
         // model to re-scan after a beat instead of trusting the noise.
@@ -867,15 +898,18 @@ async function runTool(
         // does nothing — close the toast first at the OCR coordinates.
         const resume = /继续播放之前关闭的\s*\d+\s*个视频/.test(joined);
         const dialogHint = resume
-          ? "\n（检测到「继续播放」弹窗：先点击 OCR 中「关闭」或「立即播放」的坐标处理掉它，再操作首页其他内容——直接点首页卡片可能误播你之前关闭的视频）"
+          ? "\n（检测到「继续播放」弹窗：先点击 OCR 中「关闭」或「立即播放」的坐标处理掉它，再操作首页其他内容——直接点首页卡片可能误播你之前关闭的视频。注意：点「关闭」后顶部若出现「播放中」小窗，那是应用自动恢复播放之前关闭的视频，不是你的点击所致，与任务无关可忽略或按空格暂停）"
+          : "";
+        const playingHint = playing
+          ? playerEvidence
+            ? `\n（检测到「播放中」标记：${playingTitle}视频已在播放页播放，按规则立即 done 汇报，不要再点击）`
+            : `\n（顶部出现「播放中」小窗${playingTitle}：关闭「继续播放」弹窗后应用常会自动恢复之前关闭的视频。这【不是】目标任务已播放的证据——若与任务无关，忽略它继续操作，或按空格暂停，不要据此 done）`
           : "";
         return {
           result:
             `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}` +
             (pairs.length ? `\n\n【评分-片名配对】（点片名坐标打开详情，不会错位）：\n${pairs.join("\n")}` : "") +
-            (playing
-              ? "\n（检测到「播放中」标记：视频已在播放，按规则立即 done 汇报，不要再点击）"
-              : "") +
+            playingHint +
             playHint +
             dialogHint +
             qualityNote,
