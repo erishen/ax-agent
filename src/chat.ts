@@ -1128,6 +1128,19 @@ export function requestStop(): void {
   stopRequested = true;
 }
 
+/** Tools that only observe — exempt from the exact-signature loop guard
+ *  (re-reading the screen after an action is the correct verification loop). */
+const OBSERVE_TOOLS = new Set([
+  "ocr",
+  "read_screen",
+  "screen_info",
+  "frontmost_app",
+  "list_apps",
+  "wait_for",
+  "find",
+  "element_at",
+]);
+
 interface StepOutcome {
   state: SessionState;
   ended: "prose" | "paused" | "budget";
@@ -1244,21 +1257,6 @@ async function runSteps(
           /* treat as empty args */
         }
         const argsSig = (call.function.arguments || "{}").replace(/\s+/g, " ");
-        // Observation tools never trip the loop guard: re-reading the screen
-        // after an action is the correct verification loop (results change),
-        // so ocr/read_screen/screen_info/frontmost_app/list_apps/wait_for are
-        // exempt. The guard exists for ACTION tools — repeating the same
-        // mutation (same click/scroll/type) is where the model gets stuck.
-        const OBSERVE_TOOLS = new Set([
-          "ocr",
-          "read_screen",
-          "screen_info",
-          "frontmost_app",
-          "list_apps",
-          "wait_for",
-          "find",
-          "element_at",
-        ]);
         const sig = OBSERVE_TOOLS.has(call.function.name)
           ? ""
           : `${call.function.name} ${argsSig}`;
