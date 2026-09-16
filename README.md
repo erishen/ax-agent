@@ -1,3 +1,5 @@
+[English](README.md) | [中文](README.zh.md)
+
 # AX Agent → macOS Computer Use
 
 **Computer use for macOS** — let an agent "see and operate" any running application.

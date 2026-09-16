@@ -1,3 +1,5 @@
+[English](README.md) | [中文](README.zh.md)
+
 # AX Agent → macOS Computer Use
 
 **macOS 计算机使用助手** —— 让 agent 能「看懂 + 自由操作」任意正在运行的应用。
