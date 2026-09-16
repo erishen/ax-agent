@@ -125,6 +125,30 @@ export interface SessionState {
   undo?: UndoRecord | null;
   /** Dangerous tool call awaiting user confirmation. */
   pending?: PendingAction | null;
+  /** Monotonic ms of the last successful observation (ocr / read_screen /
+   *  open_app / outline refresh). Feeds the stale-snapshot guard: blind
+   *  coordinate/synthetic actions on an old screen are refused (dsh-computer-use
+   *  parity — cua-driver rejects actions without a fresh observation). */
+  lastObservedAt: number | null;
+}
+
+/** Coordinate / synthetic-input actions need a fresh observation. */
+const STALE_OBSERVATION_MS = 60_000;
+
+function markObserved(state: SessionState): SessionState {
+  return { ...state, lastObservedAt: Date.now() };
+}
+
+/** Refusal text when the last observation is missing or too old, else null. */
+function staleObservation(state: SessionState): string | null {
+  if (state.lastObservedAt === null) {
+    return "⚠️ 还没有任何界面观察快照（未 ocr / read_screen）。坐标与输入类操作是盲操作，请先 ocr 或 read_screen 再继续。";
+  }
+  const age = Date.now() - state.lastObservedAt;
+  if (age > STALE_OBSERVATION_MS) {
+    return `⚠️ 界面快照已超过 ${Math.round(age / 1000)}s 未刷新，坐标与输入类盲操作可能已落在过期画面上。请先重新 ocr 或 read_screen，再继续。`;
+  }
+  return null;
 }
 
 let nextId = 1;
@@ -133,7 +157,7 @@ let nextId = 1;
 let lastRead: { key: string; text: string } | null = null;
 
 export function newSession(): SessionState {
-  return { messages: [], pid: null, appName: null, outline: [] };
+  return { messages: [], pid: null, appName: null, outline: [], lastObservedAt: null };
 }
 
 /**
@@ -496,7 +520,7 @@ async function clampToWindow(
 async function refreshOutline(state: SessionState, depth = 10): Promise<SessionState> {
   if (state.pid === null) return state;
   try {
-    return { ...state, outline: await treeOf(state.pid, depth) };
+    return markObserved({ ...state, outline: await treeOf(state.pid, depth) });
   } catch {
     return state;
   }
@@ -539,7 +563,7 @@ async function toolOpenApp(state: SessionState, args: Record<string, unknown>): 
         } catch {
           /* outline is best-effort */
         }
-        state = { ...state, pid: app.pid, appName: app.name, outline };
+        state = markObserved({ ...state, pid: app.pid, appName: app.name, outline });
         if (uiKind(app.name) === "netease") nui.resetForOpenApp();
         else tui.resetForOpenApp();
         // First moment the drive target's pid is known: park our window on a
@@ -591,7 +615,7 @@ async function toolReadScreen(state: SessionState, args: Record<string, unknown>
             "\n（注意：与上一次 read_screen 结果完全相同，界面在这一步没有变化。不要重复读取同一个界面：先用 find 检索当前大纲，或换一个操作推进；交互发生后界面自然会更新。）";
         }
         lastRead = { key, text: summary };
-        return { result, state };
+        return { result, state: markObserved(state) };
 }
 
 async function toolWaitFor(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
@@ -716,7 +740,7 @@ async function toolOcr(state: SessionState, args: Record<string, unknown>): Prom
         }
         if (pid === null) return { result: "尚未选择应用，先用 open_app 打开一个", state };
         const words = await ocrWindow(pid);
-        state = { ...state, pid, appName: name };
+        state = markObserved({ ...state, pid, appName: name });
         if (!words.length) return { result: `${name} 窗口 OCR 未识别到文字（也许是纯图像界面）`, state };
         // The whole Tencent-Video OCR decision (page classification, rating
         // pairing, mini-player detection, all 11 hints, state updates) lives
@@ -950,6 +974,8 @@ async function toolElementAt(state: SessionState, args: Record<string, unknown>)
 }
 
 async function toolScroll(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const stale = staleObservation(state);
+        if (stale) return { result: stale, state };
         const lines = Number(args.lines);
         if (!Number.isFinite(lines) || lines === 0) {
           return { result: "lines 必须是非零数字（正=向上，负=向下）", state };
@@ -1020,6 +1046,8 @@ async function toolKey(state: SessionState, args: Record<string, unknown>): Prom
 }
 
 async function toolTypeKeys(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const stale = staleObservation(state);
+        if (stale) return { result: stale, state };
         const text = argStr(args, "text");
         if (!text) return { result: "缺少 text 参数", state };
         await typeKeys(text, state.pid ?? undefined);
@@ -1030,6 +1058,8 @@ async function toolTypeKeys(state: SessionState, args: Record<string, unknown>):
 }
 
 async function toolClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const stale = staleObservation(state);
+        if (stale) return { result: stale, state };
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
@@ -1047,6 +1077,8 @@ async function toolClickAt(state: SessionState, args: Record<string, unknown>): 
 }
 
 async function toolDoubleClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const stale = staleObservation(state);
+        if (stale) return { result: stale, state };
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
@@ -1062,6 +1094,8 @@ async function toolDoubleClickAt(state: SessionState, args: Record<string, unkno
 }
 
 async function toolDrag(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const stale = staleObservation(state);
+        if (stale) return { result: stale, state };
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
         if (nums.some((n) => !Number.isFinite(n))) {
           return { result: "需要数字坐标 from_x, from_y, to_x, to_y", state };
@@ -1125,6 +1159,8 @@ async function toolMenuClick(state: SessionState, args: Record<string, unknown>)
 }
 
 async function toolRightClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const stale = staleObservation(state);
+        if (stale) return { result: stale, state };
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y } = raw;

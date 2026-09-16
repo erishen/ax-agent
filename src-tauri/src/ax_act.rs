@@ -294,10 +294,21 @@ fn is_settable(element: &AXUIElement, attribute: &str) -> Option<bool> {
 /// Set the text content of an element (`AXValue`) — the "type into this field"
 /// primitive. Works on text fields / areas that expose a settable AXValue.
 ///
+/// Password fields must never receive synthetic input (dsh-computer-use
+/// parity: cua-driver refuses AXSecureTextField / AXPasswordField).
+fn is_secure_role(role: &str) -> bool {
+    role == "AXSecureTextField" || role == "AXPasswordField"
+}
+
 /// # Errors
 /// Untrusted process, stale path, or the attribute is missing/not settable.
 pub fn set_value_for_path(pid: i32, path: &[usize], text: &str) -> Result<(), String> {
     let element = element_at_path(pid, path)?;
+    if is_secure_role(&crate::ax_core::copy_string_attribute(&element, "AXRole").unwrap_or_default()) {
+        return Err(
+            "该元素是密码框（AXSecureTextField），拒绝自动写入敏感信息，请由用户手动输入".to_string(),
+        );
+    }
     if is_settable(&element, "AXValue") == Some(false) {
         return Err("该元素的 AXValue 不可写 (AXValue is not settable)".to_string());
     }
@@ -685,6 +696,24 @@ pub fn type_text_synthetic(text: &str, target: Option<i32>) -> Result<(), String
     if !is_process_trusted(false) {
         return Err("未授予辅助功能权限 (Accessibility permission not granted)".to_string());
     }
+    // Secure-field guard: never synthesize keystrokes into a password field.
+    // Synthetic events go to the focused element, so check what holds focus.
+    let app_pid = match target {
+        Some(pid) => pid,
+        None => crate::ax_core::list_applications()
+            .into_iter()
+            .find(|a| a.is_active)
+            .map(|a| a.pid)
+            .ok_or_else(|| "无法确定前台应用".to_string())?,
+    };
+    if let Ok(role) = crate::ax_core::focused_role(app_pid) {
+        if is_secure_role(&role) {
+            return Err(
+                "焦点在密码框（AXSecureTextField）上，拒绝自动输入敏感信息，请由用户手动输入"
+                    .to_string(),
+            );
+        }
+    }
     if text.is_empty() {
         return Err("文本为空".to_string());
     }
@@ -1069,5 +1098,18 @@ pub fn trace_path_at_screen_position(x: f32, y: f32) -> Result<TracedPoint, Stri
             cursor = parent;
         }
         Err("AXParent 链超长或出现环".to_string())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::is_secure_role;
+
+    #[test]
+    fn secure_role_detection_covers_password_fields() {
+        assert!(is_secure_role("AXSecureTextField"));
+        assert!(is_secure_role("AXPasswordField"));
+        assert!(!is_secure_role("AXTextField"));
+        assert!(!is_secure_role("AXTextArea"));
+        assert!(!is_secure_role(""));
     }
 }

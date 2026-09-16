@@ -540,6 +540,27 @@ pub(crate) fn copy_string_attribute(element: &AXUIElement, attribute: &str) -> O
     value.downcast_ref::<CFString>().map(|s| s.to_string())
 }
 
+/// AXRole of the element that currently holds keyboard focus in `pid`'s app
+/// ("" when there is no focus or the role is unknown).
+///
+/// Feeds the secure-field guard: typing into `AXSecureTextField` /
+/// `AXPasswordField` must be refused — passwords and secrets are for the
+/// human to type, never for synthetic input (dsh-computer-use parity).
+pub(crate) fn focused_role(pid: i32) -> Result<String, String> {
+    if !is_process_trusted(false) {
+        return Err("未授予辅助功能权限 (Accessibility permission not granted)".to_string());
+    }
+    let app = unsafe { AXUIElement::new_application(pid) };
+    let _ = unsafe { app.set_messaging_timeout(1.0) };
+    let focused = copy_attribute(&app, "AXFocusedUIElement")
+        .map_err(|e| format!("读取焦点元素失败: {}", ax_error_description(e)))?
+        .ok_or_else(|| "当前没有焦点元素".to_string())?;
+    let focused = focused
+        .downcast_ref::<AXUIElement>()
+        .ok_or_else(|| "焦点元素类型异常".to_string())?;
+    Ok(copy_string_attribute(focused, "AXRole").unwrap_or_default())
+}
+
 /// Batch-read several attributes of one element in a **single** AX IPC
 /// round-trip (the tree dumper reads 14 attributes per node; doing them one
 /// call at a time dominates traversal latency on busy apps). `names` and the
