@@ -38,7 +38,7 @@ fn recover_app_from_text(text: &str) -> Option<String> {
     // /System/Applications is NOT scanned by list_installed_apps (Finder,
     // System Settings, Terminal, Notes… live there), so add the common
     // built-in app names explicitly — recovery must work for them too.
-    for name in SYSTEM_APP_NAMES {
+    for (name, _) in SYSTEM_APPS {
         if name.chars().count() >= 2 {
             candidates.push((name.to_string(), name.chars().count()));
         }
@@ -84,7 +84,19 @@ pub fn open_application(target: &str) -> Result<AxAppInfo, String> {
     // Already running? Re-activate (and unhide) it. Match by bundle id first
     // (locale-proof: TextEdit runs as 文本编辑 on a zh-CN system, so a name
     // needle "textedit" only matches on English-locale machines).
-    let installed = find_installed(&needle);
+    let installed = find_installed(&needle).or_else(|| {
+        // /System/Applications apps aren't in the installed-apps scan, so
+        // resolve them via the built-in table to get a locale-proof bundle id.
+        SYSTEM_APPS
+            .iter()
+            .find(|(name, _)| name.to_lowercase() == needle)
+            .map(|(name, bid)| crate::ax_core::InstalledApp {
+                name: (*name).to_string(),
+                bundle_name: String::new(),
+                bundle_id: (*bid).to_string(),
+                path: String::new(),
+            })
+    });
     let running = if let Some(hit) = &installed {
         find_running_by_bundle(&hit.bundle_id)
     } else {
@@ -192,26 +204,44 @@ fn name_matches(a: &crate::ax_core::InstalledApp, needle: &str) -> bool {
         || a.bundle_id.to_lowercase() == needle
 }
 
-/// Common built-in macOS app names (zh + en) for recovery of pasted task
-/// sentences. These live in /System/Applications, outside the installed-apps
-/// scan, but `open -a <name>` still resolves them via LaunchServices.
-const SYSTEM_APP_NAMES: &[&str] = &[
-    "系统设置", "system settings",
-    "访达", "finder",
-    "备忘录", "notes",
-    "终端", "terminal",
-    "文本编辑", "textedit",
-    "计算器", "calculator",
-    "预览", "preview",
-    "音乐", "music",
-    "邮件", "mail",
-    "日历", "calendar",
-    "提醒事项", "reminders",
-    "照片", "photos",
-    "地图", "maps",
-    "信息", "messages",
-    "safari", "safari浏览器",
-    "便笺", "stickies",
+/// Built-in macOS apps that live in /System/Applications — outside the
+/// installed-apps scan (find_installed misses them) — with their bundle ids.
+/// Launching by `open -b <bundle id>` is locale-proof (18:47 session:
+/// `open -a 日历` failed because the CLI locale is English; `open -b
+/// com.apple.iCal` always works). Also used as recovery candidates when a
+/// caller pastes a whole task sentence.
+const SYSTEM_APPS: &[(&str, &str)] = &[
+    ("系统设置", "com.apple.systempreferences"),
+    ("system settings", "com.apple.systempreferences"),
+    ("访达", "com.apple.finder"),
+    ("finder", "com.apple.finder"),
+    ("日历", "com.apple.iCal"),
+    ("calendar", "com.apple.iCal"),
+    ("备忘录", "com.apple.Notes"),
+    ("notes", "com.apple.Notes"),
+    ("终端", "com.apple.Terminal"),
+    ("terminal", "com.apple.Terminal"),
+    ("文本编辑", "com.apple.TextEdit"),
+    ("textedit", "com.apple.TextEdit"),
+    ("计算器", "com.apple.calculator"),
+    ("calculator", "com.apple.calculator"),
+    ("预览", "com.apple.Preview"),
+    ("preview", "com.apple.Preview"),
+    ("音乐", "com.apple.Music"),
+    ("music", "com.apple.Music"),
+    ("邮件", "com.apple.mail"),
+    ("mail", "com.apple.mail"),
+    ("safari", "com.apple.Safari"),
+    ("提醒事项", "com.apple.reminders"),
+    ("reminders", "com.apple.reminders"),
+    ("照片", "com.apple.Photos"),
+    ("photos", "com.apple.Photos"),
+    ("信息", "com.apple.MobileSMS"),
+    ("messages", "com.apple.MobileSMS"),
+    ("便笺", "com.apple.Stickies"),
+    ("stickies", "com.apple.Stickies"),
+    ("地图", "com.apple.Maps"),
+    ("maps", "com.apple.Maps"),
 ];
 
 /// Marketing-name aliases for apps whose macOS name/bundle differs from what
@@ -392,6 +422,21 @@ mod tests {
         let err = open_application(long).unwrap_err();
         assert!(err.contains("疑似包含任务描述"), "unexpected error: {err}");
         assert!(err.contains("只填应用名称"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn system_apps_table_is_consistent() {
+        // No duplicate names, names >= 2 chars, bundle ids are plausible.
+        let mut names: Vec<&str> = Vec::new();
+        for (name, bid) in SYSTEM_APPS {
+            assert!(name.chars().count() >= 2, "short name: {name}");
+            assert!(bid.starts_with("com.apple."), "unexpected bundle id: {bid}");
+            assert!(!names.contains(name), "duplicate name: {name}");
+            names.push(name);
+        }
+        // The 18:47 failure case is present with its locale-proof bundle id.
+        assert!(SYSTEM_APPS.contains(&("日历", "com.apple.iCal")));
+        assert!(SYSTEM_APPS.contains(&("系统设置", "com.apple.systempreferences")));
     }
 
     #[test]
