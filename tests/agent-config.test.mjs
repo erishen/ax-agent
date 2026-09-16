@@ -102,7 +102,9 @@ test("policy constants are present and sane", () => {
   assert.match(SYSTEM_PROMPT, /AX Agent/);
   assert.match(SYSTEM_PROMPT, /步数是稀缺资源/);
   assert.match(SYSTEM_PROMPT, /画像只来自 profile_search 的返回/);
-  assert.doesNotMatch(SYSTEM_PROMPT, /年龄|出生年|工作强度高/);
+  // profile_search 锚点必须是通用检索维度，且保护句存在；不得硬编码具体用户年龄。
+  assert.match(SYSTEM_PROMPT, /画像只来自 profile_search 的返回/);
+  assert.doesNotMatch(SYSTEM_PROMPT, /画像锚点（\d+ 岁/);
   assert.equal(MAX_AGENT_STEPS, 25);
   assert.match(CONTINUE_NUDGE, /继续/);
 });
