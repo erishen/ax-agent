@@ -644,11 +644,13 @@ async function runSteps(
     }
 
     let turn;
+    // Streaming: forward content deltas into a live bubble. When the model
+    // is calling tools (no prose) the stream emits nothing and the step
+    // bubbles below are the visible feedback instead. Declared outside the
+    // try so the done/prose branches below can tell whether the stream
+    // already rendered the reply (and must not append it a second time).
+    let streamIdx: number | null = null;
     try {
-      // Streaming: forward content deltas into a live bubble. When the model
-      // is calling tools (no prose) the stream emits nothing and the step
-      // bubbles below are the visible feedback instead.
-      let streamIdx: number | null = null;
       turn = await llmChatStream(
         [{ role: "system", content: sysPrompt }, ...llmHistory],
         await agentTools(),
@@ -786,9 +788,12 @@ async function runSteps(
         // the streamed body text stays complete.
         if (call.function.name === "done") {
           const body = (turn.content || "").trim();
-          const finalState = body
-            ? reply(working, body)
-            : working;
+          // The live stream bubble already rendered the prose when the model
+          // emitted any (streamIdx !== null) — appending it again here makes
+          // the same reply appear twice (22:18 session: "hi" → duplicated
+          // greeting). Only reply() when the stream rendered nothing.
+          const finalState =
+            body && streamIdx === null ? reply(working, body) : working;
           return {
             state: commit({ ...finalState, pending: null, llmHistory }),
             ended: "prose",
@@ -798,10 +803,17 @@ async function runSteps(
       continue;
     }
 
-    // Final prose answer.
+    // Final prose answer. The stream bubble already holds the full text
+    // (streamIdx !== null); appending a second message duplicates the reply
+    // (22:18 session). Fall back to reply() only when the stream rendered
+    // nothing (pure tool-call turns with no prose).
     llmHistory.push({ role: "assistant", content: turn.content });
     return {
-      state: commit({ ...reply(working, turn.content || "（模型没有返回内容）"), pending: null, llmHistory }),
+      state: commit(
+        streamIdx === null
+          ? { ...reply(working, turn.content || "（模型没有返回内容）"), pending: null, llmHistory }
+          : { ...working, pending: null, llmHistory },
+      ),
       ended: "prose",
     };
   }
