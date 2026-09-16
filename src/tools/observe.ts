@@ -11,7 +11,7 @@ import {
 } from "../api";
 import type { OcrScreenWord } from "../types";
 import { findNodes, findNodesAny, renderOutline } from "../tree-utils";
-import { NAV_WORDS, garbledOcrNote, navWordNote } from "../tool-utils";
+import { NAV_WORDS, garbledOcrNote, navWordNote, resolveAppMatch } from "../tool-utils";
 import {
   argStr,
   markObserved,
@@ -41,7 +41,7 @@ export async function toolReadScreen(state: SessionState, args: Record<string, u
   let name = state.appName ?? "";
   if (wanted) {
     const apps = await listApps();
-    const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
+    const hit = resolveAppMatch(apps, wanted);
     if (!hit) return { result: `未找到运行中的应用「${wanted}」`, state };
     pid = hit.pid;
     name = hit.name;
@@ -177,7 +177,7 @@ export async function toolOcr(state: SessionState, args: Record<string, unknown>
   let name = state.appName ?? "";
   if (wanted) {
     const apps = await listApps();
-    const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
+    const hit = resolveAppMatch(apps, wanted);
     if (!hit) return { result: `未找到运行中的应用「${wanted}」`, state };
     pid = hit.pid;
     name = hit.name;

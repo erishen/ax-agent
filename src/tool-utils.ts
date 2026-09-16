@@ -8,6 +8,34 @@
 // (all old coords stale) and wait_for false-positives on nav words.
 import { truncate } from "./tree-utils.ts";
 import type { MenuEntry } from "./api";
+import type { AxAppInfo } from "./types";
+
+/**
+ * Resolve a user/model-supplied app reference against the running-app list.
+ * Matches (case-insensitive substring) the display name, the bundle id, or an
+ * exact numeric pid. Previously only the display name was matched, so names
+ * echoed back by open_app (CFBundleName, e.g. "NeteaseMusic") failed in
+ * ocr/read_screen ("未找到运行中的应用"), burning a step and misdirecting the
+ * model. Pure + IO-free for unit tests.
+ */
+export function resolveAppMatch(
+  apps: AxAppInfo[],
+  wanted: string,
+): AxAppInfo | null {
+  const q = wanted.trim().toLowerCase();
+  if (!q) return null;
+  if (/^\d+$/.test(q)) {
+    const byPid = apps.find((a) => String(a.pid) === q);
+    if (byPid) return byPid;
+  }
+  return (
+    apps.find(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.bundle_id.toLowerCase().includes(q),
+    ) ?? null
+  );
+}
 
 /** One NSScreen entry as returned by the `screen_info` desktop tool. */
 export interface ScreenInfo {

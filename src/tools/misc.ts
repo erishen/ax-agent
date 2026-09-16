@@ -11,7 +11,7 @@ import {
 } from "../api";
 import type { AxAppInfo, OutlineNode } from "../types";
 import { renderOutline } from "../tree-utils";
-import { extractAppNameFromLongArg, filterMenu, openAppArgGuard, renderMenu } from "../tool-utils";
+import { extractAppNameFromLongArg, filterMenu, openAppArgGuard, renderMenu, resolveAppMatch } from "../tool-utils";
 import { argStr, markObserved, nui, refreshOutline, tui, treeOf, uiKind, type ToolResult } from "./shared";
 import { hideAside } from "../windowctl";
 import type { SessionState } from "../types";
@@ -52,6 +52,19 @@ export async function toolOpenApp(state: SessionState, args: Record<string, unkn
 
 async function doOpenApp(state: SessionState, target: string): Promise<ToolResult> {
   const app: AxAppInfo = await openApp(target);
+  // open_app returns the CFBundleName (e.g. "NeteaseMusic"), but every
+  // other app-taking tool resolves against listApps display names (e.g.
+  // "网易云音乐") — echoing the raw name back misleads the model into an
+  // "未找到运行中的应用" step. Normalize to the display name by pid.
+  if (app.bundle_id) {
+    try {
+      const apps = await listApps();
+      const disp = apps.find((a) => a.pid === app.pid);
+      if (disp) app.name = disp.name;
+    } catch {
+      /* best-effort: keep the bundle name */
+    }
+  }
   // No focusSelf() here: in drive mode the target app must KEEP the
   // focus it just got — stealing it back breaks every subsequent
   // click_at (synthetic mouse goes to the frontmost app). The window
@@ -88,7 +101,7 @@ export async function toolMenuBar(state: SessionState, args: Record<string, unkn
   const keyword = argStr(args, "keyword");
   if (wanted) {
     const apps = await listApps();
-    const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
+    const hit = resolveAppMatch(apps, wanted);
     if (!hit) return { result: `未找到运行中的应用「${wanted}」`, state };
     pid = hit.pid;
   } else if (pid === null) {

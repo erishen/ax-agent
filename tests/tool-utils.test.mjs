@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  resolveAppMatch,
   NAV_WORDS,
   garbledOcrNote,
   navWordNote,
@@ -417,4 +418,22 @@ test("openAppArgGuard: pasted task sentence is refused with guidance", () => {
   assert.match(r, /疑似把完整任务描述传了进来/);
   assert.match(r, /只填应用名称/);
   assert.match(r, /网易云音乐/);
+});
+
+test("resolveAppMatch: display name, bundle id and numeric pid all resolve", () => {
+  const apps = [
+    { pid: 22494, name: "网易云音乐", bundle_id: "com.netease.cloudmusic", is_active: true, is_hidden: false },
+    { pid: 655, name: "访达", bundle_id: "com.apple.finder", is_active: false, is_hidden: false },
+  ];
+  // display name (case-insensitive substring) — the normal path
+  assert.equal(resolveAppMatch(apps, "网易云音乐")?.pid, 22494);
+  assert.equal(resolveAppMatch(apps, "网易云")?.pid, 22494);
+  // bundle id — open_app echoed names like "NeteaseMusic" previously failed here
+  assert.equal(resolveAppMatch(apps, "com.netease.cloudmusic")?.pid, 22494);
+  // numeric pid
+  assert.equal(resolveAppMatch(apps, "655")?.pid, 655);
+  // miss
+  assert.equal(resolveAppMatch(apps, "NeteaseMusic"), null);
+  assert.equal(resolveAppMatch(apps, ""), null);
+  assert.equal(resolveAppMatch(apps, "  "), null);
 });
