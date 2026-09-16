@@ -1,7 +1,8 @@
 //! Menu bar, app launching, local desktop tools / MCP, and permission
 //! diagnostics.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::ax_act;
@@ -53,6 +54,94 @@ pub fn ax_profile_rag_configured() -> bool {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .is_some()
+}
+
+// ---------------------------------------------------------------------------
+// Cross-session memory (memory.json in app_data_dir): which apps the user
+// has had the agent drive, and how often. The TS layer injects the list
+// into the agent's system prompt on new segments, so the model knows which
+// apps the user actually uses (TODO ④a — 跨会话记忆).
+
+/// One remembered app: how often the agent opened it, most recent use.
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct MemoryEntry {
+    pub name: String,
+    pub count: u32,
+    /// Unix seconds of the most recent use (TS formats for display).
+    pub last_used: u64,
+}
+
+/// Memory file shape — a flat map name → entry (sorted at read time).
+#[derive(Serialize, Deserialize, Default)]
+pub struct MemoryFile {
+    pub apps: Vec<MemoryEntry>,
+}
+
+const MEMORY_LIMIT: usize = 20;
+
+fn memory_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager; // app.path() / app_data_dir() 需要 Manager trait
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取 app_data_dir 失败: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    Ok(dir.join("memory.json"))
+}
+
+fn load_memory(path: &std::path::Path) -> MemoryFile {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Pure update rule (testable without AppHandle): bump or insert `name`,
+/// return entries sorted by count desc then name, capped at MEMORY_LIMIT.
+fn merge_memory(mut apps: Vec<MemoryEntry>, name: String, now: u64) -> Vec<MemoryEntry> {
+    let prev = apps.iter().find(|e| e.name == name).map(|e| e.count).unwrap_or(0);
+    apps.retain(|e| e.name != name);
+    apps.push(MemoryEntry {
+        name,
+        count: prev + 1,
+        last_used: now,
+    });
+    apps.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| b.last_used.cmp(&a.last_used))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    apps.truncate(MEMORY_LIMIT);
+    apps
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Record that the agent opened `name` — called after a successful open_app.
+#[tauri::command]
+pub fn ax_memory_add(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Ok(());
+    }
+    let path = memory_path(&app)?;
+    let mem = load_memory(&path);
+    let merged = merge_memory(mem.apps, name, now_unix());
+    let file = MemoryFile { apps: merged };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("序列化 memory.json 失败: {e}"))?;
+    std::fs::write(&path, json).map_err(|e| format!("写入 memory.json 失败: {e}"))
+}
+
+/// All remembered apps, sorted by usage (count desc, then name).
+#[tauri::command]
+pub fn ax_memory_list(app: tauri::AppHandle) -> Result<Vec<MemoryEntry>, String> {
+    let path = memory_path(&app)?;
+    Ok(load_memory(&path).apps)
 }
 
 // ---------------------------------------------------------------------------
@@ -215,4 +304,41 @@ mod tests {
 
         std::env::remove_var("PROFILE_RAG_KEY");
     }
+
+    #[test]
+    fn merge_memory_bumps_and_sorts() {
+        let apps = vec![
+            MemoryEntry { name: "微信".into(), count: 3, last_used: 100 },
+            MemoryEntry { name: "访达".into(), count: 1, last_used: 50 },
+        ];
+        let merged = merge_memory(apps, "网易云音乐".into(), 200);
+        assert_eq!(merged.len(), 3);
+        // count 相同按 last_used 降序（网易云音乐 200 > 访达 50，最近优先）
+        assert_eq!(merged[0].name, "微信"); // count 3 最大
+        assert_eq!(merged[1].name, "网易云音乐");
+        assert_eq!(merged[2].name, "访达");
+        assert_eq!(merged[1].count, 1);
+        assert_eq!(merged[1].last_used, 200);
+
+        // 再次打开微信 → count 3→4 且排最前，last_used 更新
+        let merged2 = merge_memory(merged, "微信".into(), 300);
+        assert_eq!(merged2.len(), 3);
+        assert_eq!(merged2[0].name, "微信");
+        assert_eq!(merged2[0].count, 4);
+        assert_eq!(merged2[0].last_used, 300);
+    }
+
+    #[test]
+    fn merge_memory_caps_at_limit() {
+        let mut apps: Vec<MemoryEntry> = (0..MEMORY_LIMIT)
+            .map(|i| MemoryEntry { name: format!("App{i:02}"), count: (i + 1) as u32, last_used: i as u64 })
+            .collect();
+        let merged = merge_memory(apps.clone(), "新应用".into(), 999);
+        assert_eq!(merged.len(), MEMORY_LIMIT);
+        assert!(merged.iter().any(|e| e.name == "新应用"));
+        // 被挤出的是 count 最低的那个（App00 count=1）
+        assert!(!merged.iter().any(|e| e.name == "App00"));
+        let _ = &mut apps;
+    }
 }
+

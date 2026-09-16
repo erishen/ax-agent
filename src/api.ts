@@ -296,3 +296,20 @@ export function mcpLocalCall(
 ): Promise<string> {
   return invoke("mcp_local_call", { qualified, args });
 }
+
+/** One remembered app from cross-session memory (memory.json). */
+export interface MemoryEntry {
+  name: string;
+  count: number;
+  last_used: number;
+}
+
+/** Record that the agent opened `name` (fire-and-forget; called post open_app). */
+export function memoryAdd(name: string): Promise<void> {
+  return invoke("ax_memory_add", { name });
+}
+
+/** Apps the agent has driven across sessions, most-used first. */
+export function memoryList(): Promise<MemoryEntry[]> {
+  return invoke("ax_memory_list");
+}

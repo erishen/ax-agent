@@ -407,7 +407,7 @@ function helpReply(state: SessionState): SessionState {
 // ---------------------------------------------------------------------------
 
 import { agentTools, llmChatStream, llmConfigured, type LlmMessage } from "./llm";
-import { mcpLocalCall } from "./api";
+import { mcpLocalCall, memoryList } from "./api";
 
 /** Monotonic id for assistant tool-step cards (🤖 N/25 bubbles). */
 let nextId = 1;
@@ -572,6 +572,21 @@ async function runSteps(
     sysPrompt = SYSTEM_PROMPT + environmentLimitNote(missing);
   } catch {
     /* probe failed → fall back to the static prompt */
+  }
+
+  // Cross-session memory: apps the agent has driven before, injected so the
+  // model knows what the user actually uses (and can open them faster).
+  try {
+    const mem = await memoryList();
+    if (mem.length > 0) {
+      const apps = mem
+        .slice(0, 8)
+        .map((e) => `${e.name}（${e.count}次，最近 ${new Date(e.last_used * 1000).toLocaleDateString("zh-CN")}）`)
+        .join("、");
+      sysPrompt += `\n\n【跨会话记忆】你以前驱动过这些应用（按次数排序）：${apps}。用户熟悉它们、常在里面做任务——需要打开应用时优先考虑列表里的名字。`;
+    }
+  } catch {
+    /* memory is best-effort */
   }
 
   // Signatures of recently executed tool calls; repeating one (even with

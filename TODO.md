@@ -20,7 +20,7 @@
 - [x] `examples/textedit_demo.rs`：TextEdit 全自动（定位→聚焦→写入→移窗→验证）
 - [x] `examples/probe_at.rs`：屏幕坐标点选示例
 - [x] 更多示例：keyboard / mouse / menu / wechat_stress（见 README「完整示例」）
-- [ ] 更多 App 示例：Finder（选文件/打开）、Calendar（建日程）、System Settings（切开关）— 可选增强
+- [x] 更多 App 示例：Finder（选文件/打开）、Calendar（建日程）、System Settings（切开关）— 可选增强（只读版示例已交付：访达最近文件/日历今日日程/系统设置显示器信息）
 - [ ] 示例参数化：目标 App / 文本从命令行传入 — 可选增强
 
 ## 里程碑 1.7 — 会话式操作界面（已完成 ✅，持续打磨）
@@ -44,7 +44,7 @@
 - [x] 危险操作确认（如关闭应用、删除文本）
 - [x] 安全机制：过期快照守卫（坐标/合成输入类工具 60s 未观察拒绝执行）+ 密码框保护
       （AXSecureTextField / AXPasswordField 拒绝自动输入）—— 借鉴 dsh-computer-use
-- [ ] 记忆：跨会话记住常用应用与习惯 — 可选增强
+- [x] 记忆：跨会话记住常用应用与习惯 — 可选增强（memory.json + system prompt 注入，已交付）
 
 ## 里程碑 2 — 观察与反馈闭环
 

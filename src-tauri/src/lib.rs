@@ -151,6 +151,8 @@ pub fn run() {
             commands::ax_menu_bar,
             commands::ax_open_app,
             commands::ax_profile_rag_configured,
+            commands::ax_memory_add,
+            commands::ax_memory_list,
             commands::ax_installed_apps,
             commands::ax_local_apps_config,
             commands::desktop_tool_catalog,

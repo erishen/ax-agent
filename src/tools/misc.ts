@@ -4,6 +4,7 @@
 import {
   desktopToolExec,
   listApps,
+  memoryAdd,
   menuBar,
   openApp,
   performAction,
@@ -33,6 +34,8 @@ export async function toolOpenApp(state: SessionState, args: Record<string, unkn
   state = markObserved({ ...state, pid: app.pid, appName: app.name, outline });
   if (uiKind(app.name) === "netease") nui.resetForOpenApp();
   else tui.resetForOpenApp();
+  // Remember the app across sessions (best-effort, never blocks the reply).
+  void memoryAdd(app.name).catch(() => {});
   // First moment the drive target's pid is known: park our window on a
   // screen the target does NOT occupy (the runAgent start may not have
   // known the pid yet when the app was already running).
