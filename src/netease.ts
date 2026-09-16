@@ -208,11 +208,33 @@ export function buildNeteaseClickGuard(opts: NeteaseClickGuardOpts): NeteaseClic
     (s) => Math.abs(x - s.x) <= 80 && Math.abs(y - s.y) <= 30,
   );
   if (onSong) {
+    const playing = bottomBar && titlesMatch(onSong.title, bottomBar.song);
     const replay = pendingSong && titlesMatch(onSong.title, pendingSong);
+    if (playing) {
+      return {
+        note: `\n（✅ 底栏正在播放「${onSong.title}」——播放证据成立。用 done 汇报，不要再点击）`,
+      };
+    }
+    if (replay) {
+      // Same song clicked again but the bottom bar never switched to it.
+      // The 9/16 14:05 session showed this note wrongly claiming "播放已
+      // 开始" while the bar still showed the old song, so the agent kept
+      // re-clicking the same spot. With a visible mismatched bar, block
+      // further repeats and steer to a different song.
+      if (bottomBar) {
+        return {
+          note: "",
+          blocked:
+            `⛔ 你再次点击「${onSong.title}」但底栏歌名未变为它（当前仍在播「${bottomBar.song}」），播放未生效。` +
+            `可能原因：①该曲需 VIP 会员（此前可能弹过付费窗）②单击未命中播放区。换列表里另一首歌点播，不要在同一位置反复点击。`,
+        };
+      }
+      return {
+        note: `\n（你再次点击「${onSong.title}」：底栏状态未知。先 ocr 确认底栏歌名是否已变为它——若已播放直接 done，若没变则换一首歌）`,
+      };
+    }
     return {
-      note: replay
-        ? `\n（⚠️ 「${onSong.title}」就是你刚点开播放的那首（底栏应已切换到它）：任务播放【已开始】，确认底栏歌名匹配后 done 汇报，不要重复点播。若底栏歌名没变，说明点击未生效，重新点歌名行）`
-        : `\n（将播放「${onSong.title}」${onSong.artist ? ` — ${onSong.artist}` : ""}：点击后底栏歌名应变为它，ocr 确认底栏歌名匹配后再 done）`,
+      note: `\n（将播放「${onSong.title}」${onSong.artist ? ` — ${onSong.artist}` : ""}：点击后底栏歌名应变为它，ocr 确认底栏歌名匹配后再 done）`,
     };
   }
   return base;

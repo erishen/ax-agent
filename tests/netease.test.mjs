@@ -118,12 +118,38 @@ test("buildNeteaseClickGuard: top bar (search/VIP) is off-task", () => {
   assert.match(r.note, /顶部/);
 });
 
-test("buildNeteaseClickGuard: replaying the pending song is flagged", () => {
+test("buildNeteaseClickGuard: replay with unknown bottom bar asks to verify first", () => {
   const songs = [{ title: "Nevada 内华达", artist: "Vicetone", x: 400, y: 500 }];
   const r = buildNeteaseClickGuard({
     x: 400, y: 500, verb: "单击", songs,
     homeLike: false, songList: true, playPage: false,
     bottomBar: null, pendingSong: "Nevada",
   });
-  assert.match(r.note, /不要重复点播/);
+  assert.match(r.note, /底栏状态未知/);
+  assert.equal(r.blocked, undefined);
+});
+
+test("buildNeteaseClickGuard: replay while bottom bar shows old song is blocked, switch song", () => {
+  const songs = [{ title: "Nevada 内华达", artist: "Vicetone", x: 400, y: 500 }];
+  const r = buildNeteaseClickGuard({
+    x: 400, y: 500, verb: "单击", songs,
+    homeLike: false, songList: true, playPage: false,
+    bottomBar: { song: "Walk Thru Fire - Vicetone", y: 920 }, pendingSong: "Nevada",
+  });
+  assert.ok(r.blocked, "mismatched replay must be blocked");
+  assert.match(r.blocked, /播放未生效/);
+  assert.match(r.blocked, /换列表里另一首歌/);
+  assert.match(r.blocked, /不要在同一位置反复点击/);
+});
+
+test("buildNeteaseClickGuard: replay with matching bottom bar confirms playback", () => {
+  const songs = [{ title: "Nevada 内华达", artist: "Vicetone", x: 400, y: 500 }];
+  const r = buildNeteaseClickGuard({
+    x: 400, y: 500, verb: "单击", songs,
+    homeLike: false, songList: true, playPage: false,
+    bottomBar: { song: "Nevada", y: 920 }, pendingSong: "Nevada",
+  });
+  assert.match(r.note, /播放证据成立/);
+  assert.match(r.note, /done 汇报/);
+  assert.equal(r.blocked, undefined);
 });
