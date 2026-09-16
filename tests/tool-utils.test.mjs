@@ -230,6 +230,7 @@ test("parseCommand: read does not swallow refresh (checked after read)", () => {
 import {
   argsText,
   asText,
+  extractAppNameFromLongArg,
   friendlyLlmError,
   stepHeading,
   withStepResult,
@@ -274,6 +275,21 @@ test("friendlyLlmError: 404 and timeout", () => {
 
 test("friendlyLlmError: unknown error passes through", () => {
   assert.equal(friendlyLlmError("weird failure"), "❌ LLM 调用失败：weird failure");
+});
+
+test("extractAppNameFromLongArg: recovers app name from pasted task text", () => {
+  const running = ["访达", "腾讯视频", "网易云音乐", "TextEdit"];
+  // 17:21 failure case: whole task sentence pasted into app arg
+  const task = "访达，read_screen 浏览当前窗口内容（最近使用/文稿等），找出一个真实文件的名称，用 read_screen 或 find 确认它存在";
+  assert.equal(extractAppNameFromLongArg(task, running), "访达");
+  // earliest occurrence wins across multiple mentions
+  assert.equal(extractAppNameFromLongArg("打开访达，再打开 TextEdit", running), "访达");
+  // longest name wins over a substring ("网易云音乐" over "音乐")
+  assert.equal(extractAppNameFromLongArg("打开网易云音乐。网易云音乐是自绘 UI", running), "网易云音乐");
+  // nothing known mentioned -> null (do NOT guess)
+  assert.equal(extractAppNameFromLongArg("随便开个什么东西看看", running), null);
+  // single-char names are ignored (too ambiguous)
+  assert.equal(extractAppNameFromLongArg("打开 V 看看", ["V"]), null);
 });
 
 test("argsText: k=v pairs with truncation", () => {

@@ -11,7 +11,7 @@ import {
 } from "../api";
 import type { AxAppInfo, OutlineNode } from "../types";
 import { renderOutline } from "../tree-utils";
-import { filterMenu, openAppArgGuard, renderMenu } from "../tool-utils";
+import { extractAppNameFromLongArg, filterMenu, openAppArgGuard, renderMenu } from "../tool-utils";
 import { argStr, markObserved, nui, refreshOutline, tui, treeOf, uiKind, type ToolResult } from "./shared";
 import { hideAside } from "../windowctl";
 import type { SessionState } from "../types";
@@ -19,7 +19,25 @@ import type { SessionState } from "../types";
 export async function toolOpenApp(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
   const target = argStr(args, "app");
   const argGuard = openAppArgGuard(target);
-  if (argGuard) return { result: argGuard, state };
+  if (argGuard) {
+    // 17:21 session: a weak model pasted the whole task sentence into app.
+    // If exactly one known running app name appears in it, recover instead
+    // of failing the whole task; otherwise surface the guard message.
+    const apps = await listApps();
+    const hit = extractAppNameFromLongArg(target, apps.map((a) => a.name));
+    if (hit) {
+      const inner = await doOpenApp(state, hit);
+      return {
+        ...inner,
+        result: `⚠️ open_app 的 app 参数过长（疑似粘贴了任务描述），已自动提取应用名「${hit}」并打开。下次请只传应用名。\n${inner.result}`,
+      };
+    }
+    return { result: argGuard, state };
+  }
+  return doOpenApp(state, target);
+}
+
+async function doOpenApp(state: SessionState, target: string): Promise<ToolResult> {
   const app: AxAppInfo = await openApp(target);
   // No focusSelf() here: in drive mode the target app must KEEP the
   // focus it just got — stealing it back breaks every subsequent

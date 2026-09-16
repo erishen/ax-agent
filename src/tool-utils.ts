@@ -253,3 +253,24 @@ export function openAppArgGuard(target: string): string | null {
     `app 参数只填应用名称本身（如「网易云音乐」「TextEdit」）。请用应用名重试，不要粘贴任务说明。`
   );
 }
+
+/**
+ * Best-effort recovery when a weak model pastes the whole task sentence into
+ * open_app's app arg: find the earliest known running app name that appears
+ * in the text. Longest names match first ("网易云音乐" wins over "音乐"), and
+ * the earliest occurrence wins overall ("打开访达，再开 TextEdit" → 访达).
+ * Returns null when nothing known is mentioned — caller should then fail
+ * with the guard message instead of guessing.
+ */
+export function extractAppNameFromLongArg(target: string, knownNames: string[]): string | null {
+  const candidates = [...knownNames]
+    .filter((n) => n && n.length >= 2)
+    .sort((a, b) => b.length - a.length);
+  let best: { name: string; index: number } | null = null;
+  for (const n of candidates) {
+    const idx = target.indexOf(n);
+    if (idx < 0) continue;
+    if (best === null || idx < best.index) best = { name: n, index: idx };
+  }
+  return best?.name ?? null;
+}
