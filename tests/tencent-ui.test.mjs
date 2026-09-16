@@ -249,3 +249,64 @@ test("resetForOpenApp: clears per-app state, keeps seen titles", () => {
   assert.equal(tui.detailVerifiedScores.size, 0);
   assert.ok(tui.seenTitles.includes("兰香如故"));
 });
+
+test("processOcr: personal-center page → account hint, not home hint (22:41 session)", () => {
+  const tui = new TencentUiState();
+  const words = [
+    W("首页", 1771, 200, 63, 20, 0.3),
+    W("你正在追", 1802, 241, 61, 17),
+    W("风行万里", 430, 209, 68, 17),
+    W("积分0 钻石0 账号设置", 319, 181, 165, 15),
+    W("我的主页", 255, 189, 46, 13),
+    W("加追", 294, 241, 37, 20),
+    W("收藏", 426, 241, 35, 20),
+    W("看过", 229, 241, 37, 22),
+    W("下载", 554, 241, 37, 22),
+  ];
+  const { hints } = tui.processOcr(words);
+  assert.match(hints, /个人中心/);
+  assert.match(hints, /没有/);
+  assert.match(hints, /电影/);
+  assert.doesNotMatch(hints, /请点左侧导航「电影」重新进入频道列表/);
+});
+
+test("processOcr: film channel list with 你正在追 nav → NOT home, pairs built (22:52 session)", () => {
+  const tui = new TencentUiState();
+  const words = [
+    W("首页", 1753, 195, 63, 20, 0.3),
+    W("你正在追", 1784, 237, 63, 18),
+    W("VIP会员", 1782, 278, 59, 18),
+    W("电视剧", 1784, 318, 47, 20),
+    W("电影", 1784, 360, 31, 18),
+    W("极限审判", 1946, 425, 157, 31),
+    W("30 倒计时", 2305, 441, 52, 13),
+    W("90:00", 2303, 456, 74, 22),
+    W("9.2分", 1935, 488, 58, 18),
+    W("克里斯•帕拉特 丽贝卡•弗格森 科幻悬疑", 1933, 519, 276, 18),
+  ];
+  const { hints } = tui.processOcr(words);
+  assert.match(hints, /「极限审判」评分 9.2 分/);
+  assert.doesNotMatch(hints, /当前是首页\/导航页/);
+  // the pair's click coordinate (score-badge position, what the hint
+  // advertises) must NOT be blocked — home-guard misclassification used
+  // to fire here before the homeLike fix
+  const g = tui.clickGuard(2025, 441, "单击");
+  assert.equal(g.blocked, undefined, "list-page candidate click must pass the guard");
+  assert.match(g.note ?? "", /极限审判/);
+});
+
+test("processOcr: nav home → home hint carries nav coords", () => {
+  const tui = new TencentUiState();
+  const words = [
+    W("首页", 1805, 200, 29, 17),
+    W("你正在追", 1802, 241, 61, 17),
+    W("VIP会员", 1802, 279, 56, 18),
+    W("电视剧", 1771, 316, 79, 22),
+    W("电影", 1800, 357, 34, 19),
+    W("心动的信号 第9季", 2238, 129, 216, 15),
+    W("综艺飙升榜第1名", 2238, 129, 216, 15),
+  ];
+  const { hints } = tui.processOcr(words);
+  assert.match(hints, /当前是首页\/导航页/);
+  assert.match(hints, /电影@\(1817,367\)/);
+});

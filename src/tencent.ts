@@ -70,6 +70,12 @@ export interface PageFlags {
   /** Nav home / navigation page (carries 你正在追, no list/detail/player
    * markers). Suppresses pairing — home cards play directly. */
   homeLike: boolean;
+  /** Personal-center / account page (账号设置/我的主页/积分/钻石 banner).
+   * Its left nav has NO channel entries (电影/电视剧 …) — the model must
+   * go back to 首页 first (22:41 session: Tencent opened on the "我的"
+   * page, the model hunted for 电影, clicked guessed coordinates, and
+   * burned 25 steps on an unchanged screen). */
+  accountPage: boolean;
   /** Channel list page (has a back button, no decimal ratings). */
   listPage: boolean;
   /** Player page / mini-player marker (播放中/正在播放…). */
@@ -93,16 +99,28 @@ export function detectPage(joined: string): PageFlags {
   const channelHome =
     !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放/.test(j) &&
     /热播榜/.test(j);
+  // Account / personal-center page: the top banner carries the user's
+  // account info (账号设置 / 我的主页 / 积分 / 钻石). Its left nav has no
+  // channel entries — classify it separately so the model isn't told to
+  // click a 电影 nav item that does not exist there.
+  const accountPage = /账号设置|我的主页|积分|钻石/.test(j);
+  // Channel-list pages also carry the 你正在追 left-nav entry — a page
+  // with ratings (9.2分) or a 立即播放 button is a film list, not the
+  // home (22:52 session: the model clicked 极限审判's name on the film
+  // channel and the home-guard blocked the correct click 3 times).
   const homeLike =
-    !/(返回|最热|最新|高分好评|类型|资费|地区|简介[＞>〉]|选集|播放列表|播放中|正在播放|播放[片日F！]|放中|热播榜)/.test(
+    !accountPage &&
+    !/(返回|最热|最新|高分好评|类型|资费|地区|简介[＞>〉]|选集|播放列表|播放中|正在播放|播放[片日F！]|放中|热播榜|立即播放)/.test(
       j,
-    ) && /你正在追/.test(j);
+    ) &&
+    !/\d+\.\d\s*分/.test(j) &&
+    /你正在追/.test(j);
   const playing = /播放中|正在播放|播放[片日F！]|放中/.test(j);
   const listPage =
     /〈返回|‹返回|←返回|<返回|›返回/.test(j) &&
     !/\d+\.\d/.test(j) &&
     !playing;
-  return { watchedPage, detailPage, channelHome, homeLike, listPage, playing };
+  return { watchedPage, detailPage, channelHome, homeLike, accountPage, listPage, playing };
 }
 
 export const MIN_CONFIDENCE = 0.5; // word-confidence floor for ratings/titles

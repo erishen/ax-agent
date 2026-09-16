@@ -197,7 +197,7 @@ export class TencentUiState {
     // Page classification lives in src/tencent.ts (pure, regression-
     // tested) — see detectPage for the per-session rule provenance.
     const flags = detectPage(joined);
-    const { watchedPage, detailPage, channelHome, homeLike, playing, listPage } = flags;
+    const { watchedPage, detailPage, channelHome, homeLike, accountPage, playing, listPage } = flags;
     this.lastOcrDetail = detailPage;
     this.lastOcrPlayer = playing;
     this.lastOcrChannelHome = channelHome;
@@ -479,8 +479,22 @@ export class TencentUiState {
     // entering the film channel, and how the 16:43 session (after the
     // window move reset Tencent to home) scrolled the rated home feed
     // hunting for 马腾你别走 9.7. Steer it to the 电影 channel instead.
+    // Personal-center / "我的" page: no channel entries in the left nav.
+    // 22:41 session: Tencent opened here, the model hunted for 电影 with
+    // guessed coordinates and burned all 25 steps on an unchanged screen.
+    const accountHint = accountPage
+      ? "\n（当前是个人中心/「我的」页面——顶部/中部是账号横幅（账号设置、我的主页、积分、钻石）与个人功能入口（加追/收藏/看过/下载），此页左侧导航【没有】电影/电视剧等频道入口。请先点左侧「首页」回到首页（用 ocr 中「首页」项坐标），再从首页左侧导航进入「电影」频道；不要在个人中心页找频道或点内容卡）"
+      : "";
+    // Home/navigation page: hand the model the real nav-item coordinates
+    // so it stops guessing 电影's position from memory (the OCR word list
+    // is y-sorted + capped, and channel entries can fall outside it).
+    const navCoords = homeLike && this.lastNavItems.length
+      ? ` 当前左侧导航 OCR 坐标：${this.lastNavItems
+          .map((n) => `${n.title}@(${n.x},${n.y})`)
+          .join("、")}。`
+      : "";
     const homeHint = homeLike
-      ? "\n（当前是首页/导航页——【不是电影频道列表】：即使本屏带评分卡（如 9.7 推荐位），首页卡片点卡会【直接播放】无关内容，评分也不代表频道候选池；窗口移动/最大化会让腾讯视频重置回首页。请点左侧导航「电影」重新进入频道列表（窗口可能在副屏——用最近 ocr 输出中「电影」项的实际坐标，别用主屏坐标），在频道页滚动读取各片评分挑 ≥9 候选，再点片名坐标进详情页复核——不要在首页点卡片/滚动找片）"
+      ? `\n（当前是首页/导航页——【不是电影频道列表】：即使本屏带评分卡（如 9.7 推荐位），首页卡片点卡会【直接播放】无关内容，评分也不代表频道候选池；窗口移动/最大化会让腾讯视频重置回首页。请点左侧导航「电影」重新进入频道列表${navCoords}，在频道页滚动读取各片评分挑 ≥9 候选，再点片名坐标进详情页复核——不要在首页点卡片/滚动找片）`
       : "";
     const hints =
       (pairs.length ? `\n\n【评分-片名配对】（点片名坐标打开详情，不会错位）：\n${pairs.join("\n")}` : "") +
@@ -493,6 +507,7 @@ export class TencentUiState {
       heroHint +
       channelHomeHint +
       listHint +
+      accountHint +
       homeHint +
       seenHint +
       qualityNote;
