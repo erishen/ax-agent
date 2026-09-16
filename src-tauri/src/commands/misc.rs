@@ -42,6 +42,19 @@ pub fn ax_open_app(target: String) -> Result<ax_core::AxAppInfo, String> {
     ax_open::open_application(&target)
 }
 
+/// Whether the local profile RAG (profile_search tool) is configured —
+/// PROFILE_RAG_KEY present and non-empty. The TS layer registers the
+/// profile_search tool only when this is true, so the LLM never wastes a
+/// call on an unconfigured RAG (three 9/16 sessions each burned a step on
+/// the same "未配置 PROFILE_RAG_KEY" error).
+#[tauri::command]
+pub fn ax_profile_rag_configured() -> bool {
+    std::env::var("PROFILE_RAG_KEY")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_some()
+}
+
 // ---------------------------------------------------------------------------
 // Local desktop tools + local MCP (capabilities tsm-hub doesn't provide)
 // ---------------------------------------------------------------------------
@@ -183,4 +196,23 @@ pub struct PermissionDiagnostics {
     pub responsible: Option<ProcessChainEntry>,
     /// Ancestor chain of this process, self first.
     pub chain: Vec<ProcessChainEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_rag_configured_requires_non_empty_key() {
+        std::env::remove_var("PROFILE_RAG_KEY");
+        assert!(!ax_profile_rag_configured(), "no key → not configured");
+
+        std::env::set_var("PROFILE_RAG_KEY", "test-key");
+        assert!(ax_profile_rag_configured(), "non-empty key → configured");
+
+        std::env::set_var("PROFILE_RAG_KEY", "   ");
+        assert!(!ax_profile_rag_configured(), "blank key → not configured");
+
+        std::env::remove_var("PROFILE_RAG_KEY");
+    }
 }

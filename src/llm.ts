@@ -149,14 +149,6 @@ export const DESKTOP_TOOLS: Array<{ name: string; description: string; parameter
     parameters: obj({}, []),
   },
   {
-    name: "profile_search",
-    description: "检索我的个人资料库（本地 RAG：职业经历、年龄、人格画像、工作习惯等文档片段）。我的资料没有现成的「观影偏好」，做个性化推荐/决策前先查我的画像特征，再据此推断我可能喜欢的类型。",
-    parameters: obj(
-      { query: { type: "string", description: "想了解的方面，如「职业经历 年龄 性格特点」「工作强度 生活节奏」" } },
-      ["query"],
-    ),
-  },
-  {
     name: "fs_scan",
     description:
       "扫描目录列出文件与子目录（名称/扩展名/大小/修改时间，JSON 数组，按修改时间倒序）。文件整理前先用它了解全量，max_depth 默认 1（上限 3），limit 默认 500。",
@@ -222,13 +214,34 @@ export function invalidateMcpCache(): void {
 /**
  * Tools the model may call; executed in chat.ts. Static AX + desktop tools,
  * plus dynamic mcp_local_* entries discovered from mcp.local.json.
+ * profile_search is registered only when the local profile RAG is actually
+ * configured (PROFILE_RAG_KEY set) — otherwise the model wastes a call on
+ * a guaranteed "未配置" error (three 9/16 sessions each did).
  */
 export async function agentTools(): Promise<
   Array<{ name: string; description: string; parameters: unknown }>
 > {
   const mcp = await localMcpTools();
-  return [...AGENT_TOOLS, ...DESKTOP_TOOLS, ...mcp];
+  const profile = (await invoke<boolean>("ax_profile_rag_configured"))
+    ? [PROFILE_SEARCH_TOOL]
+    : [];
+  return [...AGENT_TOOLS, ...DESKTOP_TOOLS, ...profile, ...mcp];
 }
+
+/** Registered only when the local profile RAG is configured (see
+ *  agentTools); executed in chat.ts against desktop_tool_exec. */
+export const PROFILE_SEARCH_TOOL: {
+  name: string;
+  description: string;
+  parameters: unknown;
+} = {
+  name: "profile_search",
+  description: "检索我的个人资料库（本地 RAG：职业经历、年龄、人格画像、工作习惯等文档片段）。我的资料没有现成的「观影偏好」，做个性化推荐/决策前先查我的画像特征，再据此推断我可能喜欢的类型。",
+  parameters: obj(
+    { query: { type: "string", description: "想了解的方面，如「职业经历 年龄 性格特点」「工作强度 生活节奏」" } },
+    ["query"],
+  ),
+};
 
 /** Tools the model may call; executed in chat.ts against the AX commands. */
 export const AGENT_TOOLS: Array<{ name: string; description: string; parameters: unknown }> = [
