@@ -510,29 +510,25 @@ function coordArgs(args: Record<string, unknown>): { x: number; y: number } | nu
 }
 
 /** Execute one tool call against the session; returns JSON result text. */
-async function runTool(
-  state: SessionState,
-  name: string,
-  args: Record<string, unknown>,
-  opts?: { confirmed?: boolean },
-): Promise<{ result: string; state: SessionState; dangerous?: string }> {
-  const str = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : "");
-  try {
-    if (!opts?.confirmed) {
-      const danger = dangerousReason(name, args);
-      if (danger) return { result: "⏸ 等待用户确认", state, dangerous: danger };
-    }
-    switch (name) {
-      case "list_apps": {
+type ToolResult = { result: string; state: SessionState; dangerous?: string };
+
+function argStr(args: Record<string, unknown>, k: string): string {
+  return typeof args[k] === "string" ? (args[k] as string) : "";
+}
+
+// ---------- 工具实现（从 runTool 巨型 switch 拆出的独立函数，每个工具可单独测试） ----------
+
+async function toolListApps(state: SessionState, _args: Record<string, unknown>): Promise<ToolResult> {
         const apps = await listApps();
         state = { ...state };
         return {
           result: apps.slice(0, 25).map((a) => `${a.name} (pid ${a.pid})`).join("\n"),
           state,
         };
-      }
-      case "open_app": {
-        const app: AxAppInfo = await openApp(str("app"));
+}
+
+async function toolOpenApp(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const app: AxAppInfo = await openApp(argStr(args, "app"));
         // No focusSelf() here: in drive mode the target app must KEEP the
         // focus it just got — stealing it back breaks every subsequent
         // click_at (synthetic mouse goes to the frontmost app). The window
@@ -554,10 +550,11 @@ async function runTool(
           result: `已打开 ${app.name} (pid ${app.pid})。界面元素：\n${renderOutline(outline) || "（未发现常规元素）"}`,
           state,
         };
-      }
-      case "read_screen": {
-        const wanted = str("app");
-        const filter = str("filter");
+}
+
+async function toolReadScreen(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const wanted = argStr(args, "app");
+        const filter = argStr(args, "filter");
         let pid = state.pid;
         let name = state.appName ?? "";
         if (wanted) {
@@ -590,10 +587,11 @@ async function runTool(
         }
         lastRead = { key, text: summary };
         return { result, state };
-      }
-      case "wait_for": {
-        const keyword = str("element");
-        const ocrText = str("text");
+}
+
+async function toolWaitFor(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const keyword = argStr(args, "element");
+        const ocrText = argStr(args, "text");
         const gone = args.gone === true;
         const timeout = Math.min(Math.max(Number(args.timeout) || 8, 1), 10);
         const pid = state.pid;
@@ -688,9 +686,10 @@ async function runTool(
           result: `${tail}${navHint}${garbledHint}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
           state,
         };
-      }
-      case "ocr": {
-        const wanted = str("app");
+}
+
+async function toolOcr(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const wanted = argStr(args, "app");
         let pid = state.pid;
         let name = state.appName ?? "";
         if (wanted) {
@@ -727,9 +726,10 @@ async function runTool(
           result: `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}${hints}`,
           state,
         };
-      }
-      case "find": {
-        const kw = str("keyword");
+}
+
+async function toolFind(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const kw = argStr(args, "keyword");
         const hits = kw.includes(",") || /\s/.test(kw.trim())
           ? findNodesAny(state.outline, kw.split(/[,，\s]+/).filter(Boolean))
           : findNodes(state.outline, kw);
@@ -739,26 +739,28 @@ async function runTool(
             : "无匹配元素",
           state,
         };
-      }
-      case "click": {
+}
+
+async function toolClick(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, str("keyword"))[0];
-        if (!target) return { result: `没有找到「${str("keyword")}」，先 read_screen`, state };
+        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
+        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」，先 read_screen`, state };
         if (!target.actions.length) return { result: `元素「${target.label}」不支持动作`, state };
         await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
         state = await refreshOutline(state);
         return { result: `已点击「${target.label}」（${target.actions[0]}）。界面大纲已自动更新，无需重复 read_screen。`, state };
-      }
-      case "type_text": {
+}
+
+async function toolTypeText(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         if (state.pid === null) return { result: "尚未选择应用", state };
-        const field = str("field");
+        const field = argStr(args, "field");
         const candidates = field ? findNodes(state.outline, field) : state.outline;
         const target = candidates.find(
           (n) => n.role === "AXTextArea" || n.role === "AXTextField" || n.role === "AXSearchField",
         );
         if (!target) return { result: "没有找到文本输入区", state };
         const prev = await readAttribute(state.pid, target.path, "AXValue").catch(() => null);
-        await setValue(state.pid, target.path, str("text"), { role: target.role, label: target.label });
+        await setValue(state.pid, target.path, argStr(args, "text"), { role: target.role, label: target.label });
         try {
           await focusElement(state.pid, target.path, { role: target.role, label: target.label });
         } catch {
@@ -769,15 +771,17 @@ async function runTool(
           undo: { kind: "set_value", pid: state.pid, path: target.path, prev: prev ?? "", label: target.label },
         };
         return { result: `已把文本写入「${target.label}」`, state };
-      }
-      case "focus": {
+}
+
+async function toolFocus(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, str("keyword"))[0];
-        if (!target) return { result: `没有找到「${str("keyword")}」`, state };
+        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
+        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」`, state };
         await focusElement(state.pid, target.path, { role: target.role, label: target.label });
         return { result: `焦点已给到「${target.label}」`, state };
-      }
-      case "move_window": {
+}
+
+async function toolMoveWindow(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         try {
         if (state.pid === null) return { result: "尚未选择应用", state };
         const win = state.outline.find((n) => n.role === "AXWindow");
@@ -785,7 +789,7 @@ async function runTool(
         let y = Number(args.y);
         let resize: { w: number; h: number } | null = null;
         let screenIdx = 0;
-        const position = str("position");
+        const position = argStr(args, "position");
         if (position) {
           // 语义摆放：主屏边界 + 窗口当前尺寸换算坐标（纯函数，可测）。
           let parsed: ScreenInfo[] = [];
@@ -852,7 +856,7 @@ async function runTool(
         };
         } catch (e) {
           const msg = String(e);
-          const maxi = str("position") === "maximize";
+          const maxi = argStr(args, "position") === "maximize";
           return {
             result:
               `move_window 失败: ${msg}` +
@@ -862,8 +866,9 @@ async function runTool(
             state,
           };
         }
-      }
-      case "resize_window": {
+}
+
+async function toolResizeWindow(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         if (state.pid === null) return { result: "尚未选择应用", state };
         const w = Number(args.w);
         const h = Number(args.h);
@@ -905,8 +910,9 @@ async function runTool(
           result: `窗口已调整为 ${w}x${h}\n布局已变化：先 ocr 复核各元素当前位置再操作（旧坐标已失效）。`,
           state,
         };
-      }
-      case "element_at": {
+}
+
+async function toolElementAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         let hit;
         try {
           hit = await elementAt(Number(args.x) || 0, Number(args.y) || 0);
@@ -936,8 +942,9 @@ async function runTool(
           result: `${hit.role} 「${hit.title || hit.description || "无标题"}」 pid=${hit.pid}${pathLine}`,
           state,
         };
-      }
-      case "scroll": {
+}
+
+async function toolScroll(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         const lines = Number(args.lines);
         if (!Number.isFinite(lines) || lines === 0) {
           return { result: "lines 必须是非零数字（正=向上，负=向下）", state };
@@ -965,11 +972,12 @@ async function runTool(
           result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。${qualifiedNote}${tui.sortVerifyReminder()}`,
           state,
         };
-      }
-      case "scroll_to": {
+}
+
+async function toolScrollTo(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, str("keyword"))[0];
-        if (!target) return { result: `没有找到「${str("keyword")}」，先 read_screen`, state };
+        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
+        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」，先 read_screen`, state };
         try {
           await scrollToVisible(state.pid, target.path);
         } catch {
@@ -979,12 +987,13 @@ async function runTool(
           };
         }
         return { result: `已把「${target.label}」滚动到可见区域`, state };
-      }
-      case "named_action": {
+}
+
+async function toolNamedAction(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, str("keyword"))[0];
-        if (!target) return { result: `没有找到「${str("keyword")}」`, state };
-        const action = str("action") || target.actions[0];
+        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
+        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」`, state };
+        const action = argStr(args, "action") || target.actions[0];
         if (!action) return { result: `元素「${target.label}」没有任何动作`, state };
         if (!target.actions.includes(action)) {
           return {
@@ -995,24 +1004,27 @@ async function runTool(
         await namedAction(state.pid, target.path, action);
         state = await refreshOutline(state);
         return { result: `已对「${target.label}」执行 ${action}。界面大纲已自动更新。`, state };
-      }
-      case "key": {
-        const combo = str("combo");
+}
+
+async function toolKey(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const combo = argStr(args, "combo");
         if (!combo) return { result: "缺少 combo 参数（如 enter / esc / Cmd+F）", state };
         await pressKey(combo, state.pid ?? undefined);
         state = await refreshOutline(state);
         return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。${tui.sortVerifyReminder()}`, state };
-      }
-      case "type_keys": {
-        const text = str("text");
+}
+
+async function toolTypeKeys(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+        const text = argStr(args, "text");
         if (!text) return { result: "缺少 text 参数", state };
         await typeKeys(text, state.pid ?? undefined);
         return {
           result: `已逐键输入 ${text.length} 个字符（发给当前聚焦的元素）。如需发送/提交，再按 key enter；如需看到下拉候选，用 find 搜索。`,
           state,
         };
-      }
-      case "click_at": {
+}
+
+async function toolClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
@@ -1027,8 +1039,9 @@ async function runTool(
         if (netease) nui.noteSongClick(Math.round(x), Math.round(y));
         state = await refreshOutline(state);
         return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
-      }
-      case "double_click_at": {
+}
+
+async function toolDoubleClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
@@ -1041,8 +1054,9 @@ async function runTool(
         if (netease) nui.noteSongClick(Math.round(x), Math.round(y));
         state = await refreshOutline(state);
         return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}`, state };
-      }
-      case "drag": {
+}
+
+async function toolDrag(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
         if (nums.some((n) => !Number.isFinite(n))) {
           return { result: "需要数字坐标 from_x, from_y, to_x, to_y", state };
@@ -1057,11 +1071,12 @@ async function runTool(
           result: `已从 (${Math.round(from.x)}, ${Math.round(from.y)}) 拖拽到 (${Math.round(to.x)}, ${Math.round(to.y)})。${note}滑块/画布类结果用 read_screen 或 element_at 验证。`,
           state,
         };
-      }
-      case "menu_bar": {
+}
+
+async function toolMenuBar(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         let pid = state.pid;
-        const wanted = str("app");
-        const keyword = str("keyword");
+        const wanted = argStr(args, "app");
+        const keyword = argStr(args, "keyword");
         if (wanted) {
           const apps = await listApps();
           const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
@@ -1086,8 +1101,9 @@ async function runTool(
           "提示：跨级路径（如 [0,3,2,1]）可直接 menu_click；打开过一次的子菜单项 path 也是稳定的。",
         ];
         return { result: lines.join("\n"), state };
-      }
-      case "menu_click": {
+}
+
+async function toolMenuClick(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         const raw = args.path;
         const path = Array.isArray(raw)
           ? raw.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0)
@@ -1101,8 +1117,9 @@ async function runTool(
         }
         state = await refreshOutline(state);
         return { result: `已按路径 [${path.join(",")}] 逐级点击菜单项。界面大纲已自动更新。`, state };
-      }
-      case "right_click_at": {
+}
+
+async function toolRightClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
         const raw = coordArgs(args);
         if (!raw) return { result: "需要数字坐标 x, y", state };
         const { x, y } = raw;
@@ -1112,10 +1129,77 @@ async function runTool(
           result: `已在 (${x}, ${y}) 合成右键（目标应用已确认在前台）。上下文菜单已弹出：用 read_screen 找菜单项并 click，或直接 element_at 定位菜单项坐标。`,
           state,
         };
-      }
+}
+
+async function toolDone(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
+  return { result: argStr(args, "summary") || "完成", state };
+}
+
+async function toolDesktop(state: SessionState, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return { result: await desktopToolExec(name, args), state };
+}
+
+/** Execute one tool call against the session; returns JSON result text. */
+async function runTool(
+  state: SessionState,
+  name: string,
+  args: Record<string, unknown>,
+  opts?: { confirmed?: boolean },
+): Promise<ToolResult> {
+  try {
+    if (!opts?.confirmed) {
+      const danger = dangerousReason(name, args);
+      if (danger) return { result: "⏸ 等待用户确认", state, dangerous: danger };
+    }
+    switch (name) {
+      case "list_apps":
+        return toolListApps(state, args);
+      case "open_app":
+        return toolOpenApp(state, args);
+      case "read_screen":
+        return toolReadScreen(state, args);
+      case "wait_for":
+        return toolWaitFor(state, args);
+      case "ocr":
+        return toolOcr(state, args);
+      case "find":
+        return toolFind(state, args);
+      case "click":
+        return toolClick(state, args);
+      case "type_text":
+        return toolTypeText(state, args);
+      case "focus":
+        return toolFocus(state, args);
+      case "move_window":
+        return toolMoveWindow(state, args);
+      case "resize_window":
+        return toolResizeWindow(state, args);
+      case "element_at":
+        return toolElementAt(state, args);
+      case "scroll":
+        return toolScroll(state, args);
+      case "scroll_to":
+        return toolScrollTo(state, args);
+      case "named_action":
+        return toolNamedAction(state, args);
+      case "key":
+        return toolKey(state, args);
+      case "type_keys":
+        return toolTypeKeys(state, args);
+      case "click_at":
+        return toolClickAt(state, args);
+      case "double_click_at":
+        return toolDoubleClickAt(state, args);
+      case "drag":
+        return toolDrag(state, args);
+      case "menu_bar":
+        return toolMenuBar(state, args);
+      case "menu_click":
+        return toolMenuClick(state, args);
+      case "right_click_at":
+        return toolRightClickAt(state, args);
       case "done":
-        return { result: str("summary") || "完成", state };
-      // --- 本地桌面工具（tsm-hub 做不到的能力）---
+        return toolDone(state, args);
       case "clipboard_set":
       case "clipboard_get":
       case "notify":
@@ -1126,8 +1210,7 @@ async function runTool(
       case "profile_search":
       case "fs_scan":
       case "fs_move":
-        return { result: await desktopToolExec(name, args), state };
-      // --- 本地 MCP 服务器（mcp.local.json，tsm-hub 未挂载的）---
+        return toolDesktop(state, name, args);
       default:
         if (name.startsWith("mcp_local_")) {
           const qualified = name.slice("mcp_local_".length);
