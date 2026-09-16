@@ -406,13 +406,12 @@ mod tests {
     }
 
     #[test]
-    fn long_app_arguments_with_known_app_recover_instead_of_failing() {
+    fn recover_app_from_text_recovers_netease_from_task_sentence() {
         // 18:01 session: whole task sentence pasted — an installed app name
-        // (网易云音乐, via consumer alias) appears inside, so we recover by
-        // opening that app instead of rejecting.
+        // (网易云音乐, via consumer alias) appears inside. Pure recovery
+        // check (no real launch): opening it is covered by the caller path.
         let long = "网易云音乐。网易云音乐是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主";
-        let ok = open_application(long).expect("should recover and launch");
-        assert_eq!(ok.name, "网易云音乐", "unexpected app: {}", ok.name);
+        assert_eq!(recover_app_from_text(long), Some("网易云音乐".to_string()));
     }
 
     #[test]
