@@ -219,6 +219,8 @@ pnpm tauri build    # 产出 .app / .dmg（Dock 图标用 app-icon.svg 生成）
 
 ## 结构
 
+> 架构深入解读：[ARCHITECTURE.md](./ARCHITECTURE.md)。
+
 ```
 ax-agent/
 ├── index.html / src/           # React + TypeScript 前端

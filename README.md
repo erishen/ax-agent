@@ -243,6 +243,8 @@ ax-agent binary itself:
 
 ## Structure
 
+> Architecture deep-dive: [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ```
 ax-agent/
 ├── index.html / src/           # React + TypeScript frontend
