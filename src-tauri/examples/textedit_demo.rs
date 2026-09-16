@@ -21,8 +21,8 @@
 //! Permissions: launch from a Terminal that is ticked in
 //! System Settings → Privacy & Security → Accessibility.
 
-use ax_explorer_lib::ax_act;
-use ax_explorer_lib::ax_core;
+use ax_agent_lib::ax_act;
+use ax_agent_lib::ax_core;
 
 /// One node of a minimal in-process AX tree walk (labels only).
 fn summarize(node: &ax_core::AxNode) -> String {
@@ -104,7 +104,7 @@ fn main() {
     println!("③ 已聚焦文本区域 (AXFocused = true)");
 
     // 4. 写入 — replace the text content via AXValue.
-    let demo_text = "Hello from AX Explorer!\n这一行是用 AXUIElementSetAttributeValue 写入的。\n";
+    let demo_text = "Hello from AX Agent!\n这一行是用 AXUIElementSetAttributeValue 写入的。\n";
     ax_act::set_value_for_path(app.pid, &path, demo_text).expect("写入 AXValue 失败");
     println!("④ 已写入 {} 字节文本 (AXValue)", demo_text.len());
 

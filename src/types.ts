@@ -38,7 +38,7 @@ export interface PermissionOverview {
 /** Permission query result (serialized from Rust `PermissionOverview`). */
 export interface PermissionStatus extends PermissionOverview {}
 
-/** One process in the ancestor chain of the ax-explorer process. */
+/** One process in the ancestor chain of the ax-agent process. */
 export interface ProcessChainEntry {
   pid: number;
   name: string;

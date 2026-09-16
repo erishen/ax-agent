@@ -1,4 +1,4 @@
-# AX Explorer → macOS Computer Use
+# AX Agent → macOS Computer Use
 
 **Computer use for macOS** — 让 agent 能「看懂 + 自由操作」任意正在运行的应用。
 以 **Rust + Tauri 2 + React + TypeScript** 构建，语义操作通道走 **macOS Accessibility
@@ -177,24 +177,24 @@ pnpm tauri build    # 产出 .app / .dmg（Dock 图标用 app-icon.svg 生成）
 
 ### 权限（重要）
 
-辅助功能权限授给 **responsible process**，不是 ax-explorer 二进制本身：
+辅助功能权限授给 **responsible process**，不是 ax-agent 二进制本身：
 
 - `pnpm tauri dev`：给 **启动 dev 命令的 App**（Terminal / iTerm / VS Code / agent 宿主）
   授权 —— 系统设置 → 隐私与安全性 → 辅助功能 → 「+」添加并勾选；
   应用内权限页会显示进程链并高亮该勾选的 App
-- 打包后的 `.app`：给 **AX Explorer** 本身授权
+- 打包后的 `.app`：给 **AX Agent** 本身授权
 
 ### 端口分配（workspace 约定）
 
 | 项目 | vite 端口 | HMR 端口 |
 | --- | --- | --- |
 | `sprite` | 1420 | 1421 |
-| `ax-explorer` | 1520 | 1521 |
+| `ax-agent` | 1520 | 1521 |
 
 ## 结构
 
 ```
-ax-explorer/
+ax-agent/
 ├── index.html / src/           # React + TypeScript 前端
 │   ├── App.tsx                 # 权限门 / 会话↔检查器 Tab / 检查器视图
 │   ├── ChatView.tsx            # 💬 会话 UI（气泡、输入框）

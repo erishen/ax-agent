@@ -40,9 +40,9 @@ fn main() {
 
     // 1. Window lookup: AX tree first, CGWindowList fallback (the path under
     //    test — QQLive's AX windows have no size).
-    let ax_tree = ax_explorer_lib::ax_core::build_tree_export(pid, 10);
+    let ax_tree = ax_agent_lib::ax_core::build_tree_export(pid, 10);
     println!("AX 树: {}", ax_tree.as_ref().map(|_| "OK".into()).unwrap_or_else(|e| format!("失败 {e}")));
-    let cg = ax_explorer_lib::ocr::find_window_cg(pid);
+    let cg = ax_agent_lib::ocr::find_window_cg(pid);
     let Some((win_id, pos, size)) = cg else {
         eprintln!("CGWindowList 也没找到 pid {pid} 的窗口");
         std::process::exit(1);
@@ -64,7 +64,7 @@ fn main() {
     assert!(status.success(), "screencapture 失败（检查屏幕录制权限）");
 
     // 3. OCR + map to screen points (same math as ax_ocr_window).
-    match ax_explorer_lib::ocr::ocr_image(&out_path) {
+    match ax_agent_lib::ocr::ocr_image(&out_path) {
         Ok(res) => {
             let _ = std::fs::remove_file(&out_path);
             let sx = size.0 / res.width;

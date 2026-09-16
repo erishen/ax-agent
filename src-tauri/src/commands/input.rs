@@ -124,7 +124,7 @@ fn frontmost_guard(pid: Option<i32>) -> Result<(), String> {
             return Ok(());
         }
         if round == 0 {
-            // The target dropped to the background (e.g. ax-explorer took
+            // The target dropped to the background (e.g. ax-agent took
             // focus). Reactivate it, wait a beat, then re-check. The command
             // wrappers are sync-bodied #[tauri::command(async)], so a real
             // sleep is the only option here; it's once per agent step.

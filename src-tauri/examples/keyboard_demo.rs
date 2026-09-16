@@ -17,8 +17,8 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use ax_explorer_lib::ax_act;
-use ax_explorer_lib::ax_core;
+use ax_agent_lib::ax_act;
+use ax_agent_lib::ax_core;
 
 /// Depth-first search for the first text area; returns its child-index path.
 fn find_text_area(node: &ax_core::AxNode, path: Vec<usize>) -> Option<(Vec<usize>, String)> {

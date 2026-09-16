@@ -125,7 +125,7 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
             let script = format!(
                 "display notification \"{}\" with title \"{}\"",
                 esc(msg),
-                esc(if title.is_empty() { "AX Explorer" } else { title })
+                esc(if title.is_empty() { "AX Agent" } else { title })
             );
             let mut script_cmd = std::process::Command::new("osascript");
             script_cmd.arg("-e").arg(&script);

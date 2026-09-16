@@ -13,8 +13,8 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use ax_explorer_lib::ax_act::{self, MenuEntry};
-use ax_explorer_lib::ax_core::{self, AxAppInfo};
+use ax_agent_lib::ax_act::{self, MenuEntry};
+use ax_agent_lib::ax_core::{self, AxAppInfo};
 
 /// Print the menu tree (top 2 levels is plenty for a demo).
 fn print_menu(entry: &MenuEntry, depth: usize) {

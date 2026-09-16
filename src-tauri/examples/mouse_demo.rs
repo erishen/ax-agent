@@ -16,8 +16,8 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use ax_explorer_lib::ax_act;
-use ax_explorer_lib::ax_core::{self, AxNode};
+use ax_agent_lib::ax_act;
+use ax_agent_lib::ax_core::{self, AxNode};
 
 /// Find the first window node and its (position, size) from attributes.
 fn find_window(node: &AxNode) -> Option<((f64, f64), (f64, f64))> {

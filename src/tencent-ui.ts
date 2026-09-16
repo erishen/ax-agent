@@ -26,7 +26,7 @@ import {
   type PairCandidate,
 } from "./tencent.ts";
 
-const SEEN_KEY = "axExplorer.seenTitles.v1";
+const SEEN_KEY = "axAgent.seenTitles.v1";
 
 /** Tools that observe the UI (reset the "no-observation run"). */
 const OBSERVE_TOOLS = new Set(["ocr", "wait_for", "read_screen", "element_at", "screen_info"]);

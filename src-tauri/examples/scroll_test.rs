@@ -6,7 +6,7 @@
 fn main() {
     let (x, y) = (600.0, 400.0);
     println!("scrolling +2 lines at ({x}, {y})");
-    match ax_explorer_lib::ax_act::scroll_at_position(x, y, 2.0, None) {
+    match ax_agent_lib::ax_act::scroll_at_position(x, y, 2.0, None) {
         Ok(()) => println!("scroll event posted OK"),
         Err(e) => {
             eprintln!("scroll failed: {e}");

@@ -111,7 +111,7 @@ pub fn mcp_local_call(qualified: String, args: serde_json::Value) -> Result<Stri
 // Permission diagnostics
 // ---------------------------------------------------------------------------
 
-/// One process in the ancestor chain of the ax-explorer process.
+/// One process in the ancestor chain of the ax-agent process.
 #[derive(Clone, Serialize)]
 pub struct ProcessChainEntry {
     pub pid: u32,
@@ -122,7 +122,7 @@ pub struct ProcessChainEntry {
 ///
 /// In dev mode the app is `cargo run`-launched from a terminal, so macOS
 /// attributes the Accessibility grant to the *responsible* process — the app
-/// at the root of the chain (Terminal / iTerm / VS Code), not ax-explorer
+/// at the root of the chain (Terminal / iTerm / VS Code), not ax-agent
 /// itself. The gate shows this chain so the user knows exactly which entry to
 /// tick in System Settings.
 ///

@@ -1,5 +1,5 @@
 //! Minimal MCP (Model Context Protocol) client so MCP servers **tsm-hub
-//! hasn't mounted** can still be used from ax-explorer — local, per-machine,
+//! hasn't mounted** can still be used from ax-agent — local, per-machine,
 //! gitignored config (`mcp.local.json`).
 //!
 //! Protocol: JSON-RPC 2.0 over stdio (the common local-server transport).
@@ -312,7 +312,7 @@ fn spawn_session(sc: &McpServerConfig) -> Result<RpcSession, String> {
         serde_json::json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": { "name": "ax-explorer", "version": "0.1.0" },
+            "clientInfo": { "name": "ax-agent", "version": "0.1.0" },
         }),
     )?;
     if let Some(pv) = init.get("protocolVersion").and_then(|p| p.as_str()) {

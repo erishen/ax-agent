@@ -15,7 +15,7 @@ fn main() {
     println!("target pid = {pid}");
 
     // 2. CG window bounds for that pid.
-    match ax_explorer_lib::ocr::find_window_cg(pid) {
+    match ax_agent_lib::ocr::find_window_cg(pid) {
         Some((wid, (x, y), (w, h))) => {
             println!("CGWindow #{wid} bounds: x={x:.1} y={y:.1} w={w:.1} h={h:.1}");
             println!("  center = ({:.1}, {:.1})", x + w / 2.0, y + h / 2.0);

@@ -3,10 +3,10 @@
 
 fn main() {
     let target = std::env::args().nth(1).unwrap_or_else(|| "腾讯视频".into());
-    match ax_explorer_lib::ax_open::open_application(&target) {
+    match ax_agent_lib::ax_open::open_application(&target) {
         Ok(info) => {
             println!("open_application → {} (pid {})", info.name, info.pid);
-            let has_window = ax_explorer_lib::ocr::find_window_cg(info.pid).is_some();
+            let has_window = ax_agent_lib::ocr::find_window_cg(info.pid).is_some();
             println!("窗口在屏上: {has_window}");
         }
         Err(e) => {

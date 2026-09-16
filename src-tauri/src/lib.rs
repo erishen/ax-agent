@@ -1,4 +1,4 @@
-//! AX Explorer — macOS Accessibility (AXUIElement) inspector built with Tauri 2.
+//! AX Agent — macOS computer-use agent (AXUIElement + OCR + synthetic input) built with Tauri 2.
 //!
 //! Commands (see `commands.rs`):
 //!   - ax_permission_status  : is the process a trusted accessibility client

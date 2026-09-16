@@ -13,7 +13,7 @@
 //!
 //! Permissions: same as textedit_demo (Accessibility ticked for the terminal).
 
-use ax_explorer_lib::ax_act;
+use ax_agent_lib::ax_act;
 
 fn main() {
     // Parse args: x y (defaults to 600 400, the middle of a small display).

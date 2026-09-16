@@ -21,7 +21,7 @@ import {
   type SongCandidate,
 } from "./netease.ts";
 
-const PLAYED_KEY = "axExplorer.neteasePlayed.v1";
+const PLAYED_KEY = "axAgent.neteasePlayed.v1";
 
 /** NetEase always shows the currently playing song in the bottom bar —
  * including a song the user was playing before the task. Playback evidence

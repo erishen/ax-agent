@@ -28,7 +28,7 @@ fn main() {
 }
 
 fn ocr_png(p: &str) {
-    match ax_explorer_lib::ocr::ocr_image(Path::new(p)) {
+    match ax_agent_lib::ocr::ocr_image(Path::new(p)) {
         Ok(res) => {
             println!(
                 "[ocr] ok img={}x{} words={}",
@@ -51,7 +51,7 @@ fn ocr_png(p: &str) {
 }
 
 fn ocr_window(pid: i32) {
-    let Some((win_id, (x, y), (w, h))) = ax_explorer_lib::ocr::find_window_cg(pid) else {
+    let Some((win_id, (x, y), (w, h))) = ax_agent_lib::ocr::find_window_cg(pid) else {
         eprintln!("[ocr] no on-screen window for pid {pid}");
         process::exit(4);
     };
@@ -70,7 +70,7 @@ fn ocr_window(pid: i32) {
         eprintln!("[ocr] 截图失败（缺少屏幕录制权限？）");
         process::exit(6);
     }
-    match ax_explorer_lib::ocr::ocr_image(&out) {
+    match ax_agent_lib::ocr::ocr_image(&out) {
         Ok(res) => {
             let _ = std::fs::remove_file(&out);
             println!(

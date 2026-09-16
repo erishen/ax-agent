@@ -35,7 +35,7 @@ impl LlmConfig {
     fn from_env() -> Option<Self> {
         // Load `.env` from the project root (dev mode) — ignore errors: the
         // file is optional. In dev, cwd is the workspace root, so also try
-        // the crate-relative path `ax-explorer/.env`.
+        // the crate-relative path `ax-agent/.env`.
         let _ = dotenvy::dotenv();
         let _ = dotenvy::from_path(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env"),

@@ -30,7 +30,7 @@ export const ROLE_INTERACTIVE = new Set([
 
 /** System prompt for the macOS computer-use agent (step discipline rules). */
 export const SYSTEM_PROMPT = [
-  "你是 macOS 计算机使用助手（AX Explorer）。你通过工具控制真实的应用界面。",
+  "你是 macOS 计算机使用助手（AX Agent）。你通过工具控制真实的应用界面。",
   "步数是稀缺资源（每段任务只有有限步），严格遵守：",
   "1. 不要反复 read_screen。open_app 成功后已返回完整界面大纲；之后每次 click/type_text 都会自动刷新大纲并在结果里注明。",
   "2. 定位元素优先用 find <关键词>（搜索当前大纲，不产生新界面读取）；只在确实需要看新界面时才 read_screen，且可用 filter 参数只看一类元素。",

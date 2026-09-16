@@ -3,11 +3,11 @@
 //! with localized display names (备忘录, not Notes) for example-task chips.
 //!
 //! ```bash
-//! cargo run -p ax-explorer --example installed_apps
+//! cargo run -p ax-agent --example installed_apps
 //! ```
 
 fn main() {
-    match ax_explorer_lib::ax_core::list_installed_apps() {
+    match ax_agent_lib::ax_core::list_installed_apps() {
         Ok(apps) => {
             println!("found {} installed applications\n", apps.len());
             println!("{:<22} {:<20} {:<28} path", "display name", "bundle name", "bundle id");

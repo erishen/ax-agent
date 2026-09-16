@@ -1,4 +1,4 @@
-# TODO — ax-explorer → macOS Computer Use
+# TODO — ax-agent → macOS Computer Use
 
 项目定位：**Computer Use for macOS** —— 让 agent 能「看懂 + 操作」任意应用，
 以 Accessibility (AXUIElement) 为语义操作通道，CGEvent 为兜底合成输入通道。

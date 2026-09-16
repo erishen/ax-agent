@@ -160,7 +160,7 @@ export function stripMarkdownSyntax(s: string): string {
 /** Render the whole session as plain text — for the 📋 copy button and the log. */
 export function sessionTranscript(s: SessionState): string {
   const lines: string[] = [];
-  lines.push("# AX Explorer 会话记录");
+  lines.push("# AX Agent 会话记录");
   lines.push(`- 时间：${new Date().toLocaleString("zh-CN")}`);
   if (s.appName) lines.push(`- 目标应用：${s.appName}（pid ${s.pid}）`);
   lines.push("");

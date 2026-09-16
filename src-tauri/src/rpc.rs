@@ -52,7 +52,7 @@ fn rpc_token() -> String {
     }
     let path = std::env::var("HOME")
         .ok()
-        .map(|h| PathBuf::from(h).join(".ax-explorer/rpc.token"));
+        .map(|h| PathBuf::from(h).join(".ax-agent/rpc.token"));
     let Some(path) = path else {
         return String::new(); // no HOME → tokenless loopback (fallback)
     };
@@ -189,7 +189,7 @@ where
 async fn dispatch(method: &str, params: &Value) -> Result<Value, (i64, String)> {
     match method {
         "ax.ping" => Ok(json!("pong")),
-        "ax.version" => Ok(json!({ "name": "ax-explorer", "rpc": 1 })),
+        "ax.version" => Ok(json!({ "name": "ax-agent", "rpc": 1 })),
         "ax.permissions" => Ok(serde_json::to_value(commands::permission_overview())
             .map_err(|e| (-32603, format!("序列化失败: {e}")))?),
 
@@ -532,7 +532,7 @@ async fn handle_rpc(
             StatusCode::UNAUTHORIZED,
             Json(json!({
                 "jsonrpc": "2.0", "id": Value::Null,
-                "error": { "code": -32000, "message": "未授权：缺少或错误的 Bearer token（设置 AX_RPC_TOKEN 或 ~/.ax-explorer/rpc.token）" }
+                "error": { "code": -32000, "message": "未授权：缺少或错误的 Bearer token（设置 AX_RPC_TOKEN 或 ~/.ax-agent/rpc.token）" }
             })),
         );
     }

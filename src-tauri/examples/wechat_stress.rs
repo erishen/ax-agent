@@ -19,8 +19,8 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use ax_explorer_lib::ax_act;
-use ax_explorer_lib::ax_core::{self, AxNode};
+use ax_agent_lib::ax_act;
+use ax_agent_lib::ax_core::{self, AxNode};
 
 /// Depth-first search collecting (path, node) for matches.
 fn collect<'a>(
@@ -62,7 +62,7 @@ fn main() {
 
     // 1. Open/focus WeChat.
     step(1, "打开/聚焦 WeChat");
-    let app = match ax_explorer_lib::ax_open::open_application("WeChat") {
+    let app = match ax_agent_lib::ax_open::open_application("WeChat") {
         Ok(a) => a,
         Err(e) => {
             eprintln!("✗ 打开 WeChat 失败: {e}");

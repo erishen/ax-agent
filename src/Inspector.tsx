@@ -406,7 +406,7 @@ export default function Inspector() {
       <main className="app permission-gate">
         <h1>需要辅助功能权限</h1>
         <p>
-          AX Explorer 通过 macOS Accessibility API（AXUIElement）读取其他应用的
+          AX Agent 通过 macOS Accessibility API（AXUIElement）读取其他应用的
           界面结构。请在
           <br />
           <b>系统设置 → 隐私与安全性 → 辅助功能</b>
@@ -478,7 +478,7 @@ export default function Inspector() {
           <div className="diag">
             <p className="diag-hint">
               开发模式下，权限授给启动本应用的 App（ responsible process ），
-              而不是 ax-explorer 本身。请在辅助功能列表里勾选：
+              而不是 ax-agent 本身。请在辅助功能列表里勾选：
             </p>
             <p className="diag-responsible">
               {diag.responsible
@@ -530,7 +530,7 @@ export default function Inspector() {
         </div>
       )}
       <header className="toolbar">
-        <h1>AX Explorer</h1>
+        <h1>AX Agent</h1>
         <select
           value={currentPid ?? ""}
           onChange={(e) => {

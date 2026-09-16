@@ -6,11 +6,11 @@ help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 dev: ## 启动桌面应用（只清理本项目的残留进程与 1520 端口，再 vite 热更新 + Rust 编译）
-	@echo "[kill-dev] 清理残留 ax-explorer 进程..."
-	@pkill -f 'target/debug/ax-explorer' 2>/dev/null || true
-	@pkill -f 'target/release/ax-explorer' 2>/dev/null || true
+	@echo "[kill-dev] 清理残留 ax-agent 进程..."
+	@pkill -f 'target/debug/ax-agent' 2>/dev/null || true
+	@pkill -f 'target/release/ax-agent' 2>/dev/null || true
 	@# 只清理本项目的 vite（匹配本项目路径，绝不能误杀 sprite 的 vite）
-	@pkill -f 'ax-explorer/node_modules/.bin/vite' 2>/dev/null || true
+	@pkill -f 'ax-agent/node_modules/.bin/vite' 2>/dev/null || true
 	@# 清理占用 1520 端口的进程（本项目 vite dev server；1420 属于 sprite，永不触碰）
 	@if lsof -ti:1520 > /dev/null 2>&1; then \
 		echo "[kill-dev] 清理占用 1520 端口的进程..."; \

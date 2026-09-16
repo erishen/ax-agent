@@ -1,5 +1,5 @@
 {
-  "$comment": "复制为 mcp.local.json（已 gitignore，仅本机生效）。stdio MCP 服务器列表：command + args + env。配置后重启 ax-explorer，agent 即可通过 mcp_{server}.{tool} 工具直接调用这些服务器（tsm-hub 没挂载的 MCP 在这里补齐）。",
+  "$comment": "复制为 mcp.local.json（已 gitignore，仅本机生效）。stdio MCP 服务器列表：command + args + env。配置后重启 ax-agent，agent 即可通过 mcp_{server}.{tool} 工具直接调用这些服务器（tsm-hub 没挂载的 MCP 在这里补齐）。",
   "servers": {
     "fetch": {
       "command": "uvx",
@@ -8,7 +8,7 @@
     "memory": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "env": { "MEMORY_FILE_PATH": "/tmp/ax-explorer-memory.json" }
+      "env": { "MEMORY_FILE_PATH": "/tmp/ax-agent-memory.json" }
     }
   }
 }

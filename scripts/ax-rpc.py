@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ax-explorer JSON-RPC CLI client — drive the loopback server for observe+act.
+"""ax-agent JSON-RPC CLI client — drive the loopback server for observe+act.
 
 Usage:
   ./ax-rpc.py ping
@@ -38,7 +38,7 @@ import sys
 import urllib.request
 
 ENDPOINT = os.environ.get("AX_RPC_URL", "http://127.0.0.1:8931/rpc")
-TOKEN_FILE = os.path.expanduser("~/.ax-explorer/rpc.token")
+TOKEN_FILE = os.path.expanduser("~/.ax-agent/rpc.token")
 _counter = 0
 
 
