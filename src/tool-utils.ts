@@ -115,7 +115,7 @@ export function garbledOcrNote(
 export type ParsedCommand =
   | { kind: "help" }
   | { kind: "continue" }
-  | { kind: "open"; target: string }
+  | { kind: "open"; target: string; tail?: string }
   | { kind: "apps" }
   | { kind: "read"; app: string }
   | { kind: "refresh" }
@@ -148,7 +148,15 @@ export function parseCommand(input: string): ParsedCommand | null {
   if (/^(帮助|help|用法|能做什么|指令)[?？]?$/i.test(lower)) return { kind: "help" };
   if (/^(继续|接着做|接着来|continue|go on|resume)[?？]?$/i.test(lower)) return { kind: "continue" };
   const open = input.match(/^(?:打开|启动|open|launch)\s*(.+)$/i);
-  if (open) return { kind: "open", target: cutAppName(open[1].trim()) };
+  if (open) {
+    const raw = open[1].trim();
+    const target = cutAppName(raw);
+    // Whatever got cut away is the rest of the task — the offline open
+    // command can only launch, so surface it (19:52 session: '打开日历，用
+    // ocr 或 read_screen 查看今天的日期区域…' opened but never reported).
+    const tail = raw.slice(target.length).replace(/^[,，。;；、\s并和然后再]+/, "");
+    return { kind: "open", target, tail };
+  }
   if (/^(应用列表|应用|apps|list apps)$/i.test(lower)) return { kind: "apps" };
   const read = input.match(/^(?:读一下|读取|刷新读|读|read|inspect)\s*(.*)$/i);
   if (read) return { kind: "read", app: read[1].trim() };

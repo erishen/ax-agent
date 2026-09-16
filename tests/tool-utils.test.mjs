@@ -166,9 +166,9 @@ test("parseCommand: continue forms", () => {
 });
 
 test("parseCommand: open carries the target", () => {
-  assert.deepEqual(parseCommand("打开腾讯视频"), { kind: "open", target: "腾讯视频" });
-  assert.deepEqual(parseCommand("open TextEdit"), { kind: "open", target: "TextEdit" });
-  assert.deepEqual(parseCommand("启动 备忘录"), { kind: "open", target: "备忘录" });
+  assert.deepEqual(parseCommand("打开腾讯视频"), { kind: "open", target: "腾讯视频", tail: "" });
+  assert.deepEqual(parseCommand("open TextEdit"), { kind: "open", target: "TextEdit", tail: "" });
+  assert.deepEqual(parseCommand("启动 备忘录"), { kind: "open", target: "备忘录", tail: "" });
 });
 
 test("parseCommand: apps forms", () => {
@@ -213,7 +213,7 @@ test("parseCommand: natural language without a command prefix → null", () => {
   assert.equal(parseCommand("把 WeChat 和备忘录左右分屏"), null);
   assert.equal(parseCommand(""), null);
   // "打开" without a space now opens the rest as target (no-space Chinese)
-  assert.deepEqual(parseCommand("打开腾讯视频"), { kind: "open", target: "腾讯视频" });
+  assert.deepEqual(parseCommand("打开腾讯视频"), { kind: "open", target: "腾讯视频", tail: "" });
 });
 
 test("parseCommand: read does not swallow refresh (checked after read)", () => {
@@ -276,6 +276,17 @@ test("friendlyLlmError: 404 and timeout", () => {
 
 test("friendlyLlmError: unknown error passes through", () => {
   assert.equal(friendlyLlmError("weird failure"), "❌ LLM 调用失败：weird failure");
+});
+
+test("parseCommand: open carries the cut-away task tail", () => {
+  const cmd = parseCommand("打开日历，用 ocr 或 read_screen 查看今天的日期区域");
+  assert.equal(cmd.kind, "open");
+  assert.equal(cmd.target, "日历");
+  assert.equal(cmd.tail, "用 ocr 或 read_screen 查看今天的日期区域");
+  // no punctuation → no tail
+  const bare = parseCommand("打开访达");
+  assert.equal(bare.kind, "open");
+  assert.equal(bare.tail, "");
 });
 
 test("cutAppName: slices app name at punctuation, keeps multi-word names", () => {

@@ -170,8 +170,19 @@ function reply(state: SessionState, text: string): SessionState {
 // Command handlers — each returns the next session state
 // ---------------------------------------------------------------------------
 
-async function cmdOpen(state: SessionState, target: string): Promise<SessionState> {
+async function cmdOpen(
+  state: SessionState,
+  target: string,
+  tail?: string,
+): Promise<SessionState> {
   let next = reply(state, `正在打开「${target}」…`);
+  // 19:52 session: '打开日历，用 ocr 或 read_screen 查看今天的日期区域…'
+  // opened but never reported — offline quick commands are single-shot. Tell
+  // the user the rest of the task needs the agent (LLM configured) instead
+  // of silently stopping after the launch.
+  const tailNote = tail
+    ? `\n\n📎 这条消息还包含后续步骤（「${tail.slice(0, 40)}${tail.length > 40 ? "…" : ""}」）。离线快捷指令只能执行单条命令；配置 LLM 后重新发送，我会完整执行。`
+    : "";
   // Open + warm outline + report, with an optional recovery note.
   const openAndReport = async (name: string, note: string): Promise<SessionState> => {
     const app: AxAppInfo = await openApp(name);
@@ -189,10 +200,13 @@ async function cmdOpen(state: SessionState, target: string): Promise<SessionStat
       const outline = await treeOf(app.pid, 10);
       return reply(
         { ...withPid, outline },
-        `${note}✅ 已打开 ${app.name}（pid ${app.pid}）\n当前界面里的可操作元素：\n${renderOutline(outline) || "（未发现常规元素）"}`,
+        `${note}✅ 已打开 ${app.name}（pid ${app.pid}）\n当前界面里的可操作元素：\n${renderOutline(outline) || "（未发现常规元素）"}${tailNote}`,
       );
     } catch {
-      return reply(withPid, `${note}✅ 已打开 ${app.name}（pid ${app.pid}）。说「读一下」查看它的界面。`);
+      return reply(
+        withPid,
+        `${note}✅ 已打开 ${app.name}（pid ${app.pid}）。说「读一下」查看它的界面。${tailNote}`,
+      );
     }
   };
   try {
@@ -992,7 +1006,7 @@ export async function handleUtterance(
 
   switch (cmd?.kind) {
     case "open":
-      return cmdOpen(withUser, cmd.target);
+      return cmdOpen(withUser, cmd.target, cmd.tail);
     case "apps":
       return cmdApps(withUser);
     case "read":
