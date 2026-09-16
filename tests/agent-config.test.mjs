@@ -16,6 +16,13 @@ import {
   environmentLimitNote,
 } from "../src/agent-config.ts";
 
+test("dangerousReason: clipboard_get needs confirmation", () => {
+  assert.match(dangerousReason("clipboard_get", {}), /剪贴板/);
+  assert.match(dangerousReason("clipboard_get", {}), /确认/);
+  // clipboard_set is a write (model output) — not gated
+  assert.equal(dangerousReason("clipboard_set", { text: "hi" }), "");
+});
+
 test("dangerousReason: enter/return key needs confirmation", () => {
   assert.match(dangerousReason("key", { combo: "enter" }), /回车键/);
   assert.match(dangerousReason("key", { combo: "return" }), /回车键/);

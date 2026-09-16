@@ -204,6 +204,13 @@ export default function ChatView() {
   const [examples, setExamples] = useState<ExampleTask[]>([]);
   const [llmOn, setLlmOn] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
+  const [privacyDismissed, setPrivacyDismissed] = useState(() => {
+    try {
+      return localStorage.getItem("ax_privacy_seen") === "1";
+    } catch {
+      return false;
+    }
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Example tasks: one unified (agent-style) pool; refresh via 🔄 or ⚙️ close.
@@ -364,6 +371,28 @@ export default function ChatView() {
             }}
           >
             取消
+          </button>
+        </div>
+      )}
+
+      {llmOn === true && !privacyDismissed && (
+        <div className="privacy-notice">
+          <span>
+            🔒 隐私提示：智能模式会把屏幕上出现的内容（OCR 文字 / AX 树 / 会话）发送到你配置的 LLM
+            服务商；完整数据流向与日志位置见 README「隐私与安全」。
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                localStorage.setItem("ax_privacy_seen", "1");
+              } catch {
+                /* storage unavailable — show again next launch */
+              }
+              setPrivacyDismissed(true);
+            }}
+          >
+            知道了
           </button>
         </div>
       )}

@@ -80,6 +80,9 @@ export function dangerousReason(name: string, args: Record<string, unknown>): st
       }
       return "";
     }
+    case "clipboard_get": {
+      return "读取剪贴板会把其中内容（可能含密码/验证码/敏感文本）注入模型上下文并发往 LLM API，需要你确认。";
+    }
     case "click":
     case "named_action":
     case "menu_click": {

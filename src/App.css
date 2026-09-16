@@ -1351,3 +1351,32 @@ body {
 .perm-banner button:hover {
   background: rgba(210, 153, 34, 0.28);
 }
+
+/* one-time privacy notice (first smart-mode enable) */
+.privacy-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: 0.5rem 0.9rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid rgba(255, 200, 80, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 200, 80, 0.08);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim, #b0b8c8);
+}
+.privacy-notice button {
+  flex-shrink: 0;
+  padding: 0.2rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+.privacy-notice button:hover {
+  background: rgba(255, 200, 80, 0.15);
+}

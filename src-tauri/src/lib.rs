@@ -91,6 +91,15 @@ fn append_session_log(app: tauri::AppHandle, text: String) -> Result<String, Str
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     }
     let file = dir.join("sessions.md");
+    // Rotate once past 1 MB: keep one archived transcript (sessions-<ts>.md)
+    // instead of letting the log grow forever, then start a fresh file.
+    const MAX_LOG_BYTES: u64 = 1 << 20;
+    if let Ok(meta) = std::fs::metadata(&file) {
+        if meta.len() > MAX_LOG_BYTES {
+            let archived = dir.join(format!("sessions-{}.md", utc_now().replace(':', "-")));
+            let _ = std::fs::rename(&file, &archived);
+        }
+    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
