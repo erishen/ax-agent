@@ -765,11 +765,18 @@ async function runSteps(
         llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: result });
         // `done` is the model's terminal report — end the segment right here
         // instead of looping (a follow-up LLM turn used to re-summarize and
-        // duplicate the text in the transcript). The step bubble above already
-        // shows the summary; no extra reply message needed.
+        // duplicate the text in the transcript). When the model also emitted
+        // body text alongside the tool call, prefer THAT as the final reply:
+        // tool-call args are emitted last and get truncated on small output
+        // budgets (19:24 session showed a summary cut off at '- P'), while
+        // the streamed body text stays complete.
         if (call.function.name === "done") {
+          const body = (turn.content || "").trim();
+          const finalState = body
+            ? reply(working, body)
+            : working;
           return {
-            state: commit({ ...working, pending: null, llmHistory }),
+            state: commit({ ...finalState, pending: null, llmHistory }),
             ended: "prose",
           };
         }

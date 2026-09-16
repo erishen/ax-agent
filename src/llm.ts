@@ -457,8 +457,9 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "done",
-    description: "任务完成（或无法继续）时调用：向用户汇报结果。",
-    parameters: obj({ summary: { type: "string", description: "给用户看的中文总结" } }, ["summary"]),
+    description:
+      "任务完成（或无法继续）时调用：向用户汇报结果。summary 给用户看的最终中文报告（结论完整、可直接阅读，但不必逐字重复你同时输出的正文）。若你已在正文里写了完整报告，summary 写简明总结即可——界面优先展示正文。",
+    parameters: obj({ summary: { type: "string", description: "给用户看的中文总结（结论完整；正文里已写完整报告时可精简）" } }, ["summary"]),
   },
 ];
 // 注：不再提供 list_skills / use_skill 客户端工具 —— tsm-hub 网关对每条
