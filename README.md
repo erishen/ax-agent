@@ -215,7 +215,13 @@ ax-agent/
 ├── index.html / src/           # React + TypeScript 前端
 │   ├── App.tsx                 # 权限门 / 会话↔检查器 Tab / 检查器视图
 │   ├── ChatView.tsx            # 💬 会话 UI（气泡、输入框）
-│   ├── chat.ts                 # 会话逻辑：工具分发（runTool）→ 34 个独立工具函数
+│   ├── chat.ts                 # 会话逻辑：命令模式 + agent 循环（runSteps）+ runTool 分发
+│   ├── tools/                  # 25 个工具实现，按领域分四模块 + shared 共享辅助
+│   │   ├── shared.ts           #   ToolResult / 观察快照 / tui-nui 状态机 / clamp / 大纲刷新
+│   │   ├── observe.ts          #   list_apps · read_screen · wait_for · ocr · find
+│   │   ├── input.ts            #   click/type/focus/合成坐标点击滚动（含守卫）
+│   │   ├── window.ts           #   move_window · resize_window · element_at · named_action
+│   │   └── misc.ts             #   open_app · menu_bar · menu_click · done · desktop 透传
 │   ├── llm.ts                  # LLM 工具 schema（DESKTOP_TOOLS）+ 对话补全
 │   ├── agent-config.ts         # 系统提示词 / 危险词 / 示例
 │   ├── api.ts / types.ts       # invoke 封装与类型

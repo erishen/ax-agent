@@ -1,4 +1,6 @@
 /** Attribute row attached to a tree node (serialized from Rust `AxAttr`). */
+import type { LlmMessage } from "./llm";
+
 export interface AxAttr {
   name: string;
   value: string;
@@ -128,4 +130,63 @@ export interface OutlineNode {
   label: string;
   value: string;
   actions: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Session model (moved out of chat.ts so the tools/ modules can share the
+// types without a chat.ts → tools/ → chat.ts import cycle).
+// ---------------------------------------------------------------------------
+
+/** One chat message (assistant = command replies, user = typed input). */
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+}
+
+/** One reversible mutation, remembered so the user can undo it. */
+export interface UndoRecord {
+  kind: "set_value" | "set_position" | "set_size";
+  pid: number;
+  path: number[];
+  /** Old AXValue text, or "x,y" position, or "w,h" size, before the mutation. */
+  prev: string;
+  label: string;
+}
+
+/** A tool call paused for dangerous-operation confirmation. */
+export interface PendingAction {
+  name: string;
+  args: Record<string, unknown>;
+  /** Human-readable reason shown in the confirm bar. */
+  reason: string;
+  /** id of the assistant tool_call, needed to post the tool result later. */
+  toolCallId: string;
+}
+
+/** Agent-mode conversation turn (OpenAI-format message). */
+export interface LlmTurnLike {
+  role: string;
+  content: string;
+}
+
+/** Everything a session knows about the app it is driving. */
+export interface SessionState {
+  messages: ChatMessage[];
+  /** pid of the app the session is driving, if any. */
+  pid: number | null;
+  appName: string | null;
+  /** Flattened outline of the last tree dump. */
+  outline: OutlineNode[];
+  /** LLM (OpenAI-format) conversation history for agent mode. */
+  llmHistory?: LlmMessage[];
+  /** Last reversible mutation, for the undo button. */
+  undo?: UndoRecord | null;
+  /** Dangerous tool call awaiting user confirmation. */
+  pending?: PendingAction | null;
+  /** Monotonic ms of the last successful observation (ocr / read_screen /
+   *  open_app / outline refresh). Feeds the stale-snapshot guard: blind
+   *  coordinate/synthetic actions on an old screen are refused (dsh-computer-use
+   *  parity — cua-driver rejects actions without a fresh observation). */
+  lastObservedAt: number | null;
 }

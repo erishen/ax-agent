@@ -18,37 +18,32 @@
  * their child-index paths), so 点击/输入/聚焦 can address elements by keyword.
  */
 import {
-  clickAt,
-  doubleClickAt,
-  drag,
   elementAt,
-  fetchTree,
   focusElement,
   listApps,
-  menuBar,
-  namedAction,
   openApp,
   performAction,
-  ocrWindow,
-  observeWait,
   permissionStatus,
-  pressKey,
   readAttribute,
   resizeWindow,
-  resizeWindowByPid,
-  moveWindowByPid,
-  rightClickAt,
-  scrollAt,
-  scrollToVisible,
   setPosition,
   setValue,
   tracePath,
-  typeKeys,
-  windowBounds,
 } from "./api";
-import type { AxAppInfo, OcrScreenWord } from "./types";
-import { TencentUiState } from "./tencent-ui";
-import { NeteaseUiState } from "./netease-ui";
+import {
+  findNodes,
+  renderOutline,
+  truncate,
+} from "./tree-utils.ts";
+import {
+  argsText,
+  asText,
+  friendlyLlmError,
+  parseCommand,
+  stepHeading,
+  withStepResult,
+} from "./tool-utils.ts";
+import type { AxAppInfo, OutlineNode, SessionState } from "./types";
 import {
   CONTINUE_NUDGE,
   MAX_AGENT_STEPS,
@@ -57,105 +52,51 @@ import {
   dangerousReason,
   environmentLimitNote,
 } from "./agent-config.ts";
-import {
-  findNodes,
-  findNodesAny,
-  flatten,
-  renderOutline,
-  truncate,
-} from "./tree-utils.ts";
-import {
-  argsText,
-  asText,
-  filterMenu,
-  friendlyLlmError,
-  openAppArgGuard,
-  parseCommand,
-  renderMenu,
-  stepHeading,
-  withStepResult,
-} from "./tool-utils.ts";
-import {
-  NAV_WORDS,
-  garbledOcrNote,
-  navWordNote,
-  resolveWindowPlacement,
-  type ScreenInfo,
-} from "./tool-utils.ts";
-import type { OutlineNode } from "./types.ts";
 import { bringBack, focusSelf, hideAside } from "./windowctl";
 import { invoke } from "@tauri-apps/api/core";
+import { tui, treeOf, type ToolResult } from "./tools/shared";
+import {
+  toolFind,
+  toolListApps,
+  toolOcr,
+  toolReadScreen,
+  toolWaitFor,
+} from "./tools/observe";
+import {
+  toolClick,
+  toolClickAt,
+  toolDoubleClickAt,
+  toolDrag,
+  toolFocus,
+  toolKey,
+  toolRightClickAt,
+  toolScroll,
+  toolScrollTo,
+  toolTypeKeys,
+  toolTypeText,
+} from "./tools/input";
+import {
+  toolElementAt,
+  toolMoveWindow,
+  toolNamedAction,
+  toolResizeWindow,
+} from "./tools/window";
+import {
+  toolDesktop,
+  toolDone,
+  toolMenuBar,
+  toolMenuClick,
+  toolOpenApp,
+} from "./tools/misc";
+
+export type {
+  ChatMessage,
+  PendingAction,
+  SessionState,
+  UndoRecord,
+} from "./types";
 
 /** One chat message (assistant = command replies, user = typed input). */
-export interface ChatMessage {
-  id: number;
-  role: "user" | "assistant";
-  text: string;
-}
-
-/** One reversible mutation, remembered so the user can undo it. */
-export interface UndoRecord {
-  kind: "set_value" | "set_position" | "set_size";
-  pid: number;
-  path: number[];
-  /** Old AXValue text, or "x,y" position, or "w,h" size, before the mutation. */
-  prev: string;
-  label: string;
-}
-
-/** A tool call paused for dangerous-operation confirmation. */
-export interface PendingAction {
-  name: string;
-  args: Record<string, unknown>;
-  /** Human-readable reason shown in the confirm bar. */
-  reason: string;
-  /** id of the assistant tool_call, needed to post the tool result later. */
-  toolCallId: string;
-}
-
-export interface SessionState {
-  messages: ChatMessage[];
-  /** pid of the app the session is driving, if any. */
-  pid: number | null;
-  appName: string | null;
-  /** Flattened outline of the last tree dump. */
-  outline: OutlineNode[];
-  /** LLM (OpenAI-format) conversation history for agent mode. */
-  llmHistory?: LlmMessage[];
-  /** Last reversible mutation, for the undo button. */
-  undo?: UndoRecord | null;
-  /** Dangerous tool call awaiting user confirmation. */
-  pending?: PendingAction | null;
-  /** Monotonic ms of the last successful observation (ocr / read_screen /
-   *  open_app / outline refresh). Feeds the stale-snapshot guard: blind
-   *  coordinate/synthetic actions on an old screen are refused (dsh-computer-use
-   *  parity — cua-driver rejects actions without a fresh observation). */
-  lastObservedAt: number | null;
-}
-
-/** Coordinate / synthetic-input actions need a fresh observation. */
-const STALE_OBSERVATION_MS = 60_000;
-
-function markObserved(state: SessionState): SessionState {
-  return { ...state, lastObservedAt: Date.now() };
-}
-
-/** Refusal text when the last observation is missing or too old, else null. */
-function staleObservation(state: SessionState): string | null {
-  if (state.lastObservedAt === null) {
-    return "⚠️ 还没有任何界面观察快照（未 ocr / read_screen）。坐标与输入类操作是盲操作，请先 ocr 或 read_screen 再继续。";
-  }
-  const age = Date.now() - state.lastObservedAt;
-  if (age > STALE_OBSERVATION_MS) {
-    return `⚠️ 界面快照已超过 ${Math.round(age / 1000)}s 未刷新，坐标与输入类盲操作可能已落在过期画面上。请先重新 ocr 或 read_screen，再继续。`;
-  }
-  return null;
-}
-
-let nextId = 1;
-
-/** Last read_screen output (app+pid → text) so an unchanged re-read is flagged. */
-let lastRead: { key: string; text: string } | null = null;
 
 export function newSession(): SessionState {
   return { messages: [], pid: null, appName: null, outline: [], lastObservedAt: null };
@@ -223,10 +164,6 @@ function reply(state: SessionState, text: string): SessionState {
   };
 }
 
-async function treeOf(pid: number, depth: number): Promise<OutlineNode[]> {
-  const tree = await fetchTree(pid, depth);
-  return flatten(tree);
-}
 
 // ---------------------------------------------------------------------------
 // Command handlers — each returns the next session state
@@ -470,719 +407,13 @@ function helpReply(state: SessionState): SessionState {
 // ---------------------------------------------------------------------------
 
 import { agentTools, llmChatStream, llmConfigured, type LlmMessage } from "./llm";
-import { desktopToolExec, mcpLocalCall } from "./api";
+import { mcpLocalCall } from "./api";
+
+/** Monotonic id for assistant tool-step cards (🤖 N/25 bubbles). */
+let nextId = 1;
 
 
 
-const tui = new TencentUiState();
-const nui = new NeteaseUiState();
-
-/** Which per-app UI decision state a target app uses. NetEase and Tencent
- * are both self-drawn (AX empty) but have different page models; every
- * other app gets no UI hints (the generic ocr/click loop). */
-function uiKind(appName: string | null): "tencent" | "netease" | null {
-  if (!appName) return null;
-  if (/网易云音乐|netease|163music/i.test(appName)) return "netease";
-  if (/腾讯视频|tencent/i.test(appName)) return "tencent";
-  return null;
-}
-
-/**
- * Clamp a screen point into the session target's main window frame, so
- * synthetic scroll/click/drag events never land on another app or the
- * desktop when the model guesses out-of-window coordinates. Returns the
- * corrected point plus a human note ("" when unchanged).
- */
-async function clampToWindow(
-  pid: number | null,
-  x: number,
-  y: number,
-): Promise<{ x: number; y: number; note: string }> {
-  if (pid === null) return { x, y, note: "" };
-  try {
-    const b = await windowBounds(pid);
-    if (!b) return { x, y, note: "" };
-    const cx = Math.min(Math.max(x, b.x), b.x + b.w - 1);
-    const cy = Math.min(Math.max(y, b.y), b.y + b.h - 1);
-    if (cx !== x || cy !== y) {
-      return {
-        x: cx,
-        y: cy,
-        note: `（坐标 (${Math.round(x)}, ${Math.round(y)}) 不在目标应用窗口内，已校正为 (${Math.round(cx)}, ${Math.round(cy)})）`,
-      };
-    }
-  } catch {
-    /* 拿不到窗口就不校正 */
-  }
-  return { x, y, note: "" };
-}
-
-/** Re-dump the outline after an action, keeping the old one on failure. */
-async function refreshOutline(state: SessionState, depth = 10): Promise<SessionState> {
-  if (state.pid === null) return state;
-  try {
-    return markObserved({ ...state, outline: await treeOf(state.pid, depth) });
-  } catch {
-    return state;
-  }
-}
-
-/** Strict numeric x/y arg parsing (null when missing or non-numeric). */
-function coordArgs(args: Record<string, unknown>): { x: number; y: number } | null {
-  const x = Number(args.x);
-  const y = Number(args.y);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-
-/** Execute one tool call against the session; returns JSON result text. */
-type ToolResult = { result: string; state: SessionState; dangerous?: string };
-
-function argStr(args: Record<string, unknown>, k: string): string {
-  return typeof args[k] === "string" ? (args[k] as string) : "";
-}
-
-// ---------- 工具实现（从 runTool 巨型 switch 拆出的独立函数，每个工具可单独测试） ----------
-
-async function toolListApps(state: SessionState, _args: Record<string, unknown>): Promise<ToolResult> {
-        const apps = await listApps();
-        state = { ...state };
-        return {
-          result: apps.slice(0, 25).map((a) => `${a.name} (pid ${a.pid})`).join("\n"),
-          state,
-        };
-}
-
-async function toolOpenApp(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const target = argStr(args, "app");
-        const argGuard = openAppArgGuard(target);
-        if (argGuard) return { result: argGuard, state };
-        const app: AxAppInfo = await openApp(target);
-        // No focusSelf() here: in drive mode the target app must KEEP the
-        // focus it just got — stealing it back breaks every subsequent
-        // click_at (synthetic mouse goes to the frontmost app). The window
-        // itself is parked on the other screen by hideAside().
-        let outline: OutlineNode[] = [];
-        try {
-          outline = await treeOf(app.pid, 10);
-        } catch {
-          /* outline is best-effort */
-        }
-        state = markObserved({ ...state, pid: app.pid, appName: app.name, outline });
-        if (uiKind(app.name) === "netease") nui.resetForOpenApp();
-        else tui.resetForOpenApp();
-        // First moment the drive target's pid is known: park our window on a
-        // screen the target does NOT occupy (the runAgent start may not have
-        // known the pid yet when the app was already running).
-        void hideAside(app.pid);
-        const outlineText = renderOutline(outline);
-        return {
-          result:
-            `已打开 ${app.name} (pid ${app.pid})。界面元素：\n${outlineText || "（未发现常规元素）"}` +
-            (outlineText
-              ? ""
-              : "\n提示：未读到 AX 元素，该应用可能是自绘 UI（如网易云音乐/腾讯视频）。请继续用 ocr 读取屏幕文字，不要在此停步。"),
-          state,
-        };
-}
-
-async function toolReadScreen(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const wanted = argStr(args, "app");
-        const filter = argStr(args, "filter");
-        let pid = state.pid;
-        let name = state.appName ?? "";
-        if (wanted) {
-          const apps = await listApps();
-          const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
-          if (!hit) return { result: `未找到运行中的应用「${wanted}」`, state };
-          pid = hit.pid;
-          name = hit.name;
-        }
-        if (pid === null) return { result: "尚未选择应用，先用 open_app 打开一个", state };
-        const outline = await treeOf(pid, 10);
-        state = { ...state, pid, appName: name, outline };
-        const shown = filter
-          ? findNodesAny(outline, filter.split(/[,，\s]+/).filter(Boolean))
-          : outline;
-        const head = filter
-          ? `${name} 中与「${filter}」相关的元素`
-          : `${name} (pid ${pid}) 的界面`;
-        const rendered = renderOutline(shown);
-        const emptyHint = filter
-          ? "（无匹配元素）"
-          : "（未发现可读元素——若该应用界面有图片或文字内容，它可能是自绘 UI，请改用 ocr 读取屏幕文字）";
-        const summary = `${head}：\n${rendered || emptyHint}`;
-        const key = `${name}:${pid}`;
-        let result = summary;
-        if (lastRead && lastRead.key === key && lastRead.text === summary) {
-          result =
-            summary +
-            "\n（注意：与上一次 read_screen 结果完全相同，界面在这一步没有变化。不要重复读取同一个界面：先用 find 检索当前大纲，或换一个操作推进；交互发生后界面自然会更新。）";
-        }
-        lastRead = { key, text: summary };
-        return { result, state: markObserved(state) };
-}
-
-async function toolWaitFor(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const keyword = argStr(args, "element");
-        const ocrText = argStr(args, "text");
-        const gone = args.gone === true;
-        const timeout = Math.min(Math.max(Number(args.timeout) || 8, 1), 10);
-        const pid = state.pid;
-        if (pid === null)
-          return { result: "尚未选择应用，先用 open_app 打开一个", state };
-        if (!keyword && !ocrText) {
-          return {
-            result:
-              "wait_for 未指定目标，仅报告界面是否变化（不推荐：空等待常是浪费步数）。" +
-              "请给 element（等 AX 元素出现/消失）或 text（等屏幕文字出现/消失，自绘 UI 用）后再等。",
-            state,
-          };
-        }
-        const deadline = Date.now() + timeout * 1000;
-        let lastOutline = state.outline;
-        let lastWords: OcrScreenWord[] = [];
-        let waited = 0;
-        let step = 2;
-        while (Date.now() < deadline) {
-          const w = await observeWait(pid, step);
-          waited += w.waited_secs;
-          if (ocrText) {
-            // 自绘 UI：用 OCR 等某段屏幕文字出现（gone=false）或消失（gone=true）。
-            // 截图+识别开销大：界面文字没变化时拉长轮询间隔（2→5s），有变化
-            // 时回到密集轮询，兼顾响应速度与资源。
-            let words: OcrScreenWord[] = [];
-            try {
-              words = await ocrWindow(pid);
-            } catch {
-              /* 截图/识别失败时继续等下一轮 */
-            }
-            const stable =
-              words.length === lastWords.length &&
-              words.every((wd, i) => wd.text === lastWords[i]?.text);
-            step = stable ? Math.min(step + 1, 5) : 2;
-            lastWords = words;
-            const hit = words.find((x) => x.text.includes(ocrText));
-            if (gone ? !hit : hit) {
-              const where = hit
-                ? ` (${Math.round(hit.x)}, ${Math.round(hit.y)})`
-                : "";
-              // Nav words are always visible — matching one does not prove a
-              // page switch, and the model must not treat it as one.
-              const navWarn = navWordNote(ocrText, gone);
-              return {
-                result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}${navWarn}`,
-                state,
-              };
-            }
-          } else {
-            let outline = lastOutline;
-            try {
-              outline = await treeOf(pid, 10);
-            } catch {
-              /* 树读取失败时沿用上一份 */
-            }
-            if (keyword) {
-              const hits = findNodes(outline, keyword);
-              if (gone ? hits.length === 0 : hits.length > 0) {
-                state = { ...state, outline };
-                return {
-                  result: gone
-                    ? `等待完成（${waited}s）：「${keyword}」已消失`
-                    : `等待完成（${waited}s）：「${keyword}」已出现\n${renderOutline(hits)}`,
-                  state,
-                };
-              }
-            } else if (JSON.stringify(outline) !== JSON.stringify(lastOutline)) {
-              state = { ...state, outline };
-              return { result: `等待完成（${waited}s）：界面已发生变化`, state };
-            }
-            lastOutline = outline;
-            state = { ...state, outline };
-          }
-        }
-        const tail = ocrText
-          ? `屏幕文字「${ocrText}」在 ${timeout}s 内未${gone ? "消失" : "出现"}。当前可见文字：\n${
-              lastWords.slice(0, 12).map((x) => x.text).join(" / ") || "（无）"
-            }`
-          : keyword
-            ? `「${keyword}」在 ${timeout}s 内未${gone ? "消失" : "出现"}`
-            : `界面在 ${timeout}s 内无变化`;
-        // Nav words are always on screen — waiting for them proves nothing
-        // about page switches and fails hard when OCR garbles the whole bar.
-        const navHint =
-          ocrText && !gone && NAV_WORDS.some((w) => ocrText.includes(w))
-            ? `\n注意：「${ocrText}」是导航栏常驻词，几乎任何页面都有，等它出现无法证明页面切换。` +
-              "应等页面切换后才会出现的特征词：频道页的筛选栏（最热/最新/高分好评/类型）、影片名、评分数字等。"
-            : "";
-        const garbledHint = garbledOcrNote(lastWords);
-        return {
-          result: `${tail}${navHint}${garbledHint}。当前界面：\n${renderOutline(state.outline) || "（无元素）"}`,
-          state,
-        };
-}
-
-async function toolOcr(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const wanted = argStr(args, "app");
-        let pid = state.pid;
-        let name = state.appName ?? "";
-        if (wanted) {
-          const apps = await listApps();
-          const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
-          if (!hit) return { result: `未找到运行中的应用「${wanted}」`, state };
-          pid = hit.pid;
-          name = hit.name;
-        }
-        // No session target yet? Fall back to the frontmost app — after
-        // open_app failed early the target is usually still frontmost.
-        if (pid === null) {
-          const fm = await desktopToolExec("frontmost_app", {});
-          const m = /^(.+?) \(pid (\d+)\)$/.exec(fm.trim());
-          if (m) {
-            pid = Number(m[2]);
-            name = m[1];
-          }
-        }
-        if (pid === null) return { result: "尚未选择应用，先用 open_app 打开一个", state };
-        const words = await ocrWindow(pid);
-        state = markObserved({ ...state, pid, appName: name });
-        if (!words.length) return { result: `${name} 窗口 OCR 未识别到文字（也许是纯图像界面）`, state };
-        // The whole Tencent-Video OCR decision (page classification, rating
-        // pairing, mini-player detection, all 11 hints, state updates) lives
-        // in TencentUiState.processOcr — regression-tested in
-        // tests/tencent-ui.test.mjs with the real session word-lists.
-        // NetEase CloudMusic routes through NeteaseUiState.processOcr (song
-        // pairing + bottom-bar playback evidence) instead.
-        const ui = uiKind(name);
-        const { joined, hints } =
-          ui === "netease" ? nui.processOcr(words) : tui.processOcr(words);
-        return {
-          result: `${name} 画面文字识别（坐标=屏幕点，可直接 click_at/type_keys）：\n${joined}${hints}`,
-          state,
-        };
-}
-
-async function toolFind(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const kw = argStr(args, "keyword");
-        const hits = kw.includes(",") || /\s/.test(kw.trim())
-          ? findNodesAny(state.outline, kw.split(/[,，\s]+/).filter(Boolean))
-          : findNodes(state.outline, kw);
-        return {
-          result: hits.length
-            ? hits.slice(0, 10).map((n) => `${n.role}「${n.label}」${n.value ? `值=${n.value}` : ""}${n.actions.length ? ` 动作=${n.actions.join(",")}` : ""}`).join("\n")
-            : "无匹配元素",
-          state,
-        };
-}
-
-async function toolClick(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
-        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」，先 read_screen`, state };
-        if (!target.actions.length) return { result: `元素「${target.label}」不支持动作`, state };
-        await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
-        state = await refreshOutline(state);
-        return { result: `已点击「${target.label}」（${target.actions[0]}）。界面大纲已自动更新，无需重复 read_screen。`, state };
-}
-
-async function toolTypeText(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const field = argStr(args, "field");
-        const candidates = field ? findNodes(state.outline, field) : state.outline;
-        const target = candidates.find(
-          (n) => n.role === "AXTextArea" || n.role === "AXTextField" || n.role === "AXSearchField",
-        );
-        if (!target) return { result: "没有找到文本输入区", state };
-        const prev = await readAttribute(state.pid, target.path, "AXValue").catch(() => null);
-        await setValue(state.pid, target.path, argStr(args, "text"), { role: target.role, label: target.label });
-        try {
-          await focusElement(state.pid, target.path, { role: target.role, label: target.label });
-        } catch {
-          /* focus is best-effort */
-        }
-        state = {
-          ...state,
-          undo: { kind: "set_value", pid: state.pid, path: target.path, prev: prev ?? "", label: target.label },
-        };
-        return { result: `已把文本写入「${target.label}」`, state };
-}
-
-async function toolFocus(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
-        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」`, state };
-        await focusElement(state.pid, target.path, { role: target.role, label: target.label });
-        return { result: `焦点已给到「${target.label}」`, state };
-}
-
-async function toolMoveWindow(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        try {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const win = state.outline.find((n) => n.role === "AXWindow");
-        let x = Number(args.x);
-        let y = Number(args.y);
-        let resize: { w: number; h: number } | null = null;
-        let screenIdx = 0;
-        const position = argStr(args, "position");
-        if (position) {
-          // 语义摆放：主屏边界 + 窗口当前尺寸换算坐标（纯函数，可测）。
-          let parsed: ScreenInfo[] = [];
-          try {
-            parsed = JSON.parse(await desktopToolExec("screen_info", {}));
-          } catch {
-            /* 屏幕信息解析失败则报错 */
-          }
-          const sb = await windowBounds(state.pid).catch(() => null);
-          const placed = resolveWindowPlacement(
-            parsed,
-            typeof args.screen === "number" ? args.screen : undefined,
-            position,
-            sb ? { w: sb.w, h: sb.h } : null,
-          );
-          if (!placed.ok) return { result: placed.error, state };
-          x = placed.placement.x;
-          y = placed.placement.y;
-          resize = placed.placement.resize;
-          screenIdx = placed.placement.screenIdx;
-        }
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          return {
-            result: "需要 x/y 坐标（或 position 语义：left/right/center/maximize）",
-            state,
-          };
-        }
-        if (win) {
-          const prev = await readAttribute(state.pid, win.path, "AXPosition").catch(() => null);
-          await setPosition(state.pid, win.path, Math.round(x), Math.round(y), {
-            role: win.role,
-            label: win.label,
-          });
-          if (resize) {
-            await resizeWindow(state.pid, win.path, resize.w, resize.h, {
-              role: win.role,
-              label: win.label,
-            });
-          }
-          state = prev && prev.includes("x:")
-            ? { ...state, undo: { kind: "set_position", pid: state.pid, path: win.path, prev, label: "窗口" } }
-            : state;
-        } else {
-          // 自绘 UI / 树里没有窗口节点：退化到 pid 级窗口操作（AXWindows 第一个窗口）。
-          await moveWindowByPid(state.pid, Math.round(x), Math.round(y));
-          if (resize) await resizeWindowByPid(state.pid, resize.w, resize.h);
-        }
-        // Self-drawn apps (Tencent Video etc.) often RELOAD the page on
-        // resize/maximize — the 电影 channel opened before the maximize can be
-        // reset back to the home page. Must warn so the model re-navigates.
-        const resetWarn = win
-          ? ""
-          : "\n注意：该应用是自绘 UI（无窗口节点），最大化/移动可能触发它重载页面（如腾讯视频会重置回首页）——之前刚完成的导航可能失效，先用 ocr 确认当前页面，必要时重新导航。";
-        return {
-          result:
-            (position === "maximize"
-              ? `窗口已最大化铺满 ${screenIdx === 0 ? "主屏" : `显示器 ${screenIdx}`}`
-              : `窗口已移到 (${Math.round(x)}, ${Math.round(y)})${
-                  resize ? ` 并调整到 ${resize.w}x${resize.h}` : ""
-                }${screenIdx === 0 ? "" : `（显示器 ${screenIdx}）`}`) +
-            "\n布局已变化：先 ocr 复核各元素当前位置再操作（最大化/移动动画期间的点击可能落空，且旧坐标已失效）。" +
-            resetWarn,
-          state,
-        };
-        } catch (e) {
-          const msg = String(e);
-          const maxi = argStr(args, "position") === "maximize";
-          return {
-            result:
-              `move_window 失败: ${msg}` +
-              (maxi
-                ? "\n窗口可能未最大化——自绘 UI 应用常不支持 AXPosition/AXSize 设置（如报错 -25200 system failure 时窗口原样未动）。不要假设最大化已生效：继续操作前先 ocr 复核当前元素坐标；若窗口尺寸够用就按现布局推进，或换 resize_window 显式调整。"
-                : "\n窗口可能未移动/未缩放。先 ocr 复核当前布局再继续，旧坐标若失效则重新读取。"),
-            state,
-          };
-        }
-}
-
-async function toolResizeWindow(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const w = Number(args.w);
-        const h = Number(args.h);
-        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
-          return { result: "w/h 必须是正数（points）", state };
-        }
-        const win = state.outline.find((n) => n.role === "AXWindow");
-        if (!win) {
-          // 自绘 UI / 树里没有窗口节点：pid 级兜底。
-          try {
-            await resizeWindowByPid(state.pid, w, h);
-          } catch (e) {
-            return {
-              result: `resize_window 失败: ${String(e)}\n窗口可能未调整——自绘 UI 应用常不支持 AXSize 设置（如 -25200 system failure）。不要假设已缩放：先 ocr 复核当前布局再继续。`,
-              state,
-            };
-          }
-          return {
-            result: `窗口已调整为 ${w}x${h}（pid 级）\n布局已变化：先 ocr 复核各元素当前位置再操作（旧坐标已失效）。`,
-            state,
-          };
-        }
-        const prev = await readAttribute(state.pid, win.path, "AXSize").catch(() => null);
-        try {
-          await resizeWindow(state.pid, win.path, w, h, {
-            role: win.role,
-            label: win.label,
-          });
-        } catch (e) {
-          return {
-            result: `resize_window 失败: ${String(e)}\n窗口可能未调整。先 ocr 复核当前布局再继续，不要假设已缩放。`,
-            state,
-          };
-        }
-        state = prev && prev.includes("w:")
-          ? { ...state, undo: { kind: "set_size", pid: state.pid, path: win.path, prev, label: "窗口" } }
-          : state;
-        return {
-          result: `窗口已调整为 ${w}x${h}\n布局已变化：先 ocr 复核各元素当前位置再操作（旧坐标已失效）。`,
-          state,
-        };
-}
-
-async function toolElementAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        let hit;
-        try {
-          hit = await elementAt(Number(args.x) || 0, Number(args.y) || 0);
-        } catch (e) {
-          const msg = String(e);
-          if (msg.includes("-25208")) {
-            const note = tui.elementAtNote();
-            const persistent =
-              note !== ""
-                ? note
-                : "这个应用请改用 ocr 读界面、click_at 操作，element_at/read_screen 对它不可用。";
-            return {
-              result: `element_at 在该位置失败（错误 -25208 = 应用不实现辅助功能 API，典型自绘 UI）。${persistent}`,
-              state,
-            };
-          }
-          throw e;
-        }
-        let pathLine = "";
-        try {
-          const traced = await tracePath(Number(args.x) || 0, Number(args.y) || 0);
-          pathLine = ` 路径=[${traced.path.join(",")}]`;
-        } catch {
-          /* path is best-effort */
-        }
-        return {
-          result: `${hit.role} 「${hit.title || hit.description || "无标题"}」 pid=${hit.pid}${pathLine}`,
-          state,
-        };
-}
-
-async function toolScroll(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const stale = staleObservation(state);
-        if (stale) return { result: stale, state };
-        const lines = Number(args.lines);
-        if (!Number.isFinite(lines) || lines === 0) {
-          return { result: "lines 必须是非零数字（正=向上，负=向下）", state };
-        }
-        let x = Number(args.x) || 0;
-        let y = Number(args.y) || 0;
-        // 坐标自动校正：滚动合成事件必须落在目标应用窗口内，否则事件会
-        // 落到别的应用/桌面上。拿目标窗口 frame，把越界坐标夹回窗口内。
-        const clamped = await clampToWindow(state.pid, x, y);
-        x = clamped.x;
-        y = clamped.y;
-        // 来回滚动检测：同一坐标先向下再向上（或反之）是无效操作——内容
-        // 回到原位，白白消耗步数。发现则拦下并提示换思路。
-        const sign = lines > 0 ? 1 : -1;
-        if (tui.scrollBounced(x, y, sign)) {
-          return {
-            result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行，但注意到你刚刚在同一位置向反方向滚过——来回滚动不会带来新内容。先 read_screen/ocr 看当前界面，确定要朝哪个方向翻页、翻到哪里，再一次性滚动到位。`,
-            state,
-          };
-        }
-        await scrollAt(x, y, lines, state.pid ?? undefined);
-        const netease = uiKind(state.appName) === "netease";
-        const qualifiedNote = netease ? nui.scrollAwayNote() : tui.scrollAwayNote();
-        return {
-          result: `已在 (${x}, ${y}) 滚动 ${lines > 0 ? "向上" : "向下"} ${Math.abs(lines)} 行。${clamped.note}列表坐标已随滚动失效：先 ocr 刷新当前屏（评分/片名/筛选栏的新位置），再用新坐标点击，不要沿用滚动前的坐标。${qualifiedNote}${tui.sortVerifyReminder()}`,
-          state,
-        };
-}
-
-async function toolScrollTo(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
-        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」，先 read_screen`, state };
-        try {
-          await scrollToVisible(state.pid, target.path);
-        } catch {
-          return {
-            result: `应用不支持 AXScrollToVisible「${target.label}」。备选：用 scroll 在其坐标区域滚动，或直接 click（多数应用点击时会自动滚到目标）。`,
-            state,
-          };
-        }
-        return { result: `已把「${target.label}」滚动到可见区域`, state };
-}
-
-async function toolNamedAction(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        const target = findNodes(state.outline, argStr(args, "keyword"))[0];
-        if (!target) return { result: `没有找到「${argStr(args, "keyword")}」`, state };
-        const action = argStr(args, "action") || target.actions[0];
-        if (!action) return { result: `元素「${target.label}」没有任何动作`, state };
-        if (!target.actions.includes(action)) {
-          return {
-            result: `元素「${target.label}」不支持 ${action}。它支持的动作：${target.actions.join(", ")}`,
-            state,
-          };
-        }
-        await namedAction(state.pid, target.path, action);
-        state = await refreshOutline(state);
-        return { result: `已对「${target.label}」执行 ${action}。界面大纲已自动更新。`, state };
-}
-
-async function toolKey(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const combo = argStr(args, "combo");
-        if (!combo) return { result: "缺少 combo 参数（如 enter / esc / Cmd+F）", state };
-        await pressKey(combo, state.pid ?? undefined);
-        state = await refreshOutline(state);
-        return { result: `已按键 ${combo}（发给当前聚焦的元素）。界面如变化，大纲已自动更新。${tui.sortVerifyReminder()}`, state };
-}
-
-async function toolTypeKeys(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const stale = staleObservation(state);
-        if (stale) return { result: stale, state };
-        const text = argStr(args, "text");
-        if (!text) return { result: "缺少 text 参数", state };
-        await typeKeys(text, state.pid ?? undefined);
-        return {
-          result: `已逐键输入 ${text.length} 个字符（发给当前聚焦的元素）。如需发送/提交，再按 key enter；如需看到下拉候选，用 find 搜索。`,
-          state,
-        };
-}
-
-async function toolClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const stale = staleObservation(state);
-        if (stale) return { result: stale, state };
-        const raw = coordArgs(args);
-        if (!raw) return { result: "需要数字坐标 x, y", state };
-        const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
-        const netease = uiKind(state.appName) === "netease";
-        const guard = netease
-          ? nui.clickGuard(Math.round(x), Math.round(y), "单击")
-          : tui.clickGuard(Math.round(x), Math.round(y), "单击");
-        if (guard.blocked) return { result: guard.blocked, state };
-        // Pass the session pid so the guard can auto-refocus the target app
-        // before firing (synthetic clicks land on whatever is frontmost).
-        await clickAt(x, y, state.pid ?? undefined);
-        if (netease) nui.noteSongClick(Math.round(x), Math.round(y));
-        state = await refreshOutline(state);
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成单击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}界面如变化，大纲已自动更新；自绘 UI 变化请用 ocr 复核。若同一位置点击两次后界面仍无变化，说明点击可能未被应用响应——停止重复点击，用 ocr 验证并换坐标/换方式推进。`, state };
-}
-
-async function toolDoubleClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const stale = staleObservation(state);
-        if (stale) return { result: stale, state };
-        const raw = coordArgs(args);
-        if (!raw) return { result: "需要数字坐标 x, y", state };
-        const { x, y, note } = await clampToWindow(state.pid, raw.x, raw.y);
-        const netease = uiKind(state.appName) === "netease";
-        const guard = netease
-          ? nui.clickGuard(Math.round(x), Math.round(y), "双击")
-          : tui.clickGuard(Math.round(x), Math.round(y), "双击");
-        if (guard.blocked) return { result: guard.blocked, state };
-        await doubleClickAt(x, y, state.pid ?? undefined);
-        if (netease) nui.noteSongClick(Math.round(x), Math.round(y));
-        state = await refreshOutline(state);
-        return { result: `已在 (${Math.round(x)}, ${Math.round(y)}) 合成双击（目标应用已确认在前台）。${note}${guard.note}${tui.sortVerifyReminder()}`, state };
-}
-
-async function toolDrag(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const stale = staleObservation(state);
-        if (stale) return { result: stale, state };
-        const nums = ["from_x", "from_y", "to_x", "to_y"].map((k) => Number(args[k]));
-        if (nums.some((n) => !Number.isFinite(n))) {
-          return { result: "需要数字坐标 from_x, from_y, to_x, to_y", state };
-        }
-        const steps = Number(args.steps);
-        const [fx0, fy0, tx0, ty0] = nums as [number, number, number, number];
-        const from = await clampToWindow(state.pid, fx0, fy0);
-        const to = await clampToWindow(state.pid, tx0, ty0);
-        const note = [from.note, to.note].filter(Boolean).join(" ");
-        await drag(from.x, from.y, to.x, to.y, Number.isFinite(steps) ? steps : undefined, state.pid ?? undefined);
-        return {
-          result: `已从 (${Math.round(from.x)}, ${Math.round(from.y)}) 拖拽到 (${Math.round(to.x)}, ${Math.round(to.y)})。${note}滑块/画布类结果用 read_screen 或 element_at 验证。`,
-          state,
-        };
-}
-
-async function toolMenuBar(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        let pid = state.pid;
-        const wanted = argStr(args, "app");
-        const keyword = argStr(args, "keyword");
-        if (wanted) {
-          const apps = await listApps();
-          const hit = apps.find((a) => a.name.toLowerCase().includes(wanted.toLowerCase()));
-          if (!hit) return { result: `未找到运行中的应用「${wanted}」`, state };
-          pid = hit.pid;
-        } else if (pid === null) {
-          return { result: "尚未选择应用且没有指定 app 参数（menu_bar 默认读前台应用，也可传 app 名）", state };
-        }
-        let bar = await menuBar(pid ?? undefined, 4);
-        let note = "";
-        if (keyword) {
-          const filtered = filterMenu(bar, keyword);
-          if (!filtered) {
-            return { result: `菜单栏里没有包含「${keyword}」的项`, state };
-          }
-          bar = filtered;
-          note = `（仅显示包含「${keyword}」的菜单项）`;
-        }
-        const lines = [
-          `菜单栏（pid ${pid}）${note}：`,
-          ...renderMenu(bar, "  "),
-          "提示：跨级路径（如 [0,3,2,1]）可直接 menu_click；打开过一次的子菜单项 path 也是稳定的。",
-        ];
-        return { result: lines.join("\n"), state };
-}
-
-async function toolMenuClick(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const raw = args.path;
-        const path = Array.isArray(raw)
-          ? raw.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0)
-          : [];
-        if (!path.length) return { result: "需要 menu_bar 返回的 path 数组", state };
-        if (state.pid === null) return { result: "尚未选择应用", state };
-        // Press each level in turn — parent menus must open before the
-        // submenu item exists/is pressable.
-        for (let i = 0; i < path.length; i += 1) {
-          await performAction(state.pid, path.slice(0, i + 1), "AXPress");
-        }
-        state = await refreshOutline(state);
-        return { result: `已按路径 [${path.join(",")}] 逐级点击菜单项。界面大纲已自动更新。`, state };
-}
-
-async function toolRightClickAt(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const stale = staleObservation(state);
-        if (stale) return { result: stale, state };
-        const raw = coordArgs(args);
-        if (!raw) return { result: "需要数字坐标 x, y", state };
-        const { x, y } = raw;
-        await rightClickAt(x, y, state.pid ?? undefined);
-        state = await refreshOutline(state, 12);
-        return {
-          result: `已在 (${x}, ${y}) 合成右键（目标应用已确认在前台）。上下文菜单已弹出：用 read_screen 找菜单项并 click，或直接 element_at 定位菜单项坐标。`,
-          state,
-        };
-}
-
-async function toolDone(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-  return { result: argStr(args, "summary") || "完成", state };
-}
-
-async function toolDesktop(state: SessionState, name: string, args: Record<string, unknown>): Promise<ToolResult> {
-  return { result: await desktopToolExec(name, args), state };
-}
 
 /** Execute one tool call against the session; returns JSON result text. */
 async function runTool(
