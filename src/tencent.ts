@@ -78,23 +78,29 @@ export interface PageFlags {
 
 /** Classify the current Tencent-Video screen from the OCR text. */
 export function detectPage(joined: string): PageFlags {
-  const watchedPage = /观看至\s*\d+\s*%|已看完|继续观看/.test(joined);
-  const detailPage = /简介[＞>〉]|选集|播放列表/.test(joined);
+  // 「已为您更新到最新内容」is a transient update toast that appears on
+  // the channel home — its "最新" must not flip the page into a list page
+  // (14:23 session: the toast let the 电影热播榜 channel-home hero card
+  // through as a list page, and clicking the hero played an unverified
+  // film). Strip it before classifying.
+  const j = joined.replace(/已为您更新到最新内容/g, "");
+  const watchedPage = /观看至\s*\d+\s*%|已看完|继续观看/.test(j);
+  const detailPage = /简介[＞>〉]|选集|播放列表/.test(j);
   // 热播榜 appears only on channel feeds (the nav home shows 飙升总榜 /
   // 热搜总榜) — 17:07 session: the film-channel home (电影热播榜 + 9.3)
   // was misread as the nav home, its 9.3 candidate was suppressed and the
   // model was told "no candidates" with a 9.3 on screen.
   const channelHome =
-    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放/.test(joined) &&
-    /热播榜/.test(joined);
+    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放/.test(j) &&
+    /热播榜/.test(j);
   const homeLike =
     !/(返回|最热|最新|高分好评|类型|资费|地区|简介[＞>〉]|选集|播放列表|播放中|正在播放|播放[片日F！]|放中|热播榜)/.test(
-      joined,
-    ) && /你正在追/.test(joined);
-  const playing = /播放中|正在播放|播放[片日F！]|放中/.test(joined);
+      j,
+    ) && /你正在追/.test(j);
+  const playing = /播放中|正在播放|播放[片日F！]|放中/.test(j);
   const listPage =
-    /〈返回|‹返回|←返回|<返回|›返回/.test(joined) &&
-    !/\d+\.\d/.test(joined) &&
+    /〈返回|‹返回|←返回|<返回|›返回/.test(j) &&
+    !/\d+\.\d/.test(j) &&
     !playing;
   return { watchedPage, detailPage, channelHome, homeLike, listPage, playing };
 }
@@ -124,6 +130,11 @@ export interface ClickGuardOpts {
   verb: string;
   pairs: PairCandidate[];
   miniPlayingTitle: string;
+  /** Left-side channel nav (首页/电视剧/电影/…) with OCR coordinates.
+   * Clicking one is the correct way into a channel, so the card-zone
+   * block must let it through (14:23 session: on a secondary-screen
+   * window the nav sits at x≈1750, far past the x≥300 threshold). */
+  navItems: { title: string; x: number; y: number }[];
   lastOcrDetail: boolean;
   lastOcrList: boolean;
   lastOcrChannelHome: boolean;
@@ -148,7 +159,20 @@ export interface ClickGuardResult {
  * double_click_at with zero coverage). */
 export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
   const { x, y, verb, pairs, miniPlayingTitle } = opts;
+  const navItems = opts.navItems ?? [];
   const base: ClickGuardResult = { note: "", setSortVerify: false };
+  // A click on a left-nav channel entry is always the right move — let it
+  // through before the home/card-zone blocks (nav coordinates come from
+  // the same OCR that classified the page, so window position is handled).
+  const onNav = navItems.find(
+    (n) => Math.abs(x - n.x) <= 80 && Math.abs(y - n.y) <= 30,
+  );
+  if (onNav) {
+    return {
+      note: `\n（点左侧导航「${onNav.title}」进入对应频道——这是进频道的正确路径）`,
+      setSortVerify: false,
+    };
+  }
   if (!pairs.length) {
     if (opts.lastOcrList && y <= 280 && x >= 330) {
       // No rating pairs on screen (rating-less list): a click in the top
@@ -183,7 +207,7 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
       return {
         blocked:
           `⛔ 当前是首页/导航页（本屏无评分候选）：${verb} (${x}, ${y}) 落在推荐卡片区，点卡会直接播放无关内容（16:33 会话先点开了《心动的信号9》）。` +
-          "不要点首页卡片。正确路径：点左侧导航「电影」（x≈200, y≈370）进入频道列表，滚动读评分挑 ≥9 候选，进详情页复核评分与题材后再点播放。",
+          "不要点首页卡片。正确路径：点左侧导航「电影」（用最近 ocr 里它的实际坐标——窗口可能在副屏，参考 ocr 输出中「电影」项的坐标）进入频道列表，滚动读评分挑 ≥9 候选，进详情页复核评分与题材后再点播放。",
         note: "",
         setSortVerify: false,
       };

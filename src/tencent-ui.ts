@@ -17,6 +17,7 @@ import {
   MAX_PAIR_HINTS,
   MIN_CONFIDENCE,
   MINI_STRIP_Y,
+  NAV_RE,
   ratingText,
   buildClickGuard,
   buildPairs,
@@ -121,6 +122,14 @@ export class TencentUiState {
 
   lastOcrChannelHome = false;
 
+  /** Left-side nav items (首页/你正在追/电视剧/电影/…) with their OCR
+   * coordinates, refilled by every processOcr. Clicking a nav item is the
+   * correct way into a channel — the click guard must let it through even
+   * on home pages (14:23 session: on a secondary-screen window the nav
+   * sits at x≈1750, far past the guard's x≥300 card-zone threshold, so a
+   * correct 电影 click was blocked as a "card-area" click). */
+  lastNavItems: { title: string; x: number; y: number }[] = [];
+
   /** Detail-page verified ratings (title → score): the only trustworthy
    * rating source. Overrides unreliable list badges when pairing (16:51
    * session: badges paired as 9.0/9.8/9.1 while the films are ~8.3). */
@@ -193,6 +202,35 @@ export class TencentUiState {
     this.lastOcrPlayer = playing;
     this.lastOcrChannelHome = channelHome;
     this.lastOcrList = listPage;
+    // Refill left-nav coordinates (nav words share a tight x cluster at
+    // the window's left edge). The top bar (片库/腾讯视频) and VIP badge
+    // are not channel entries; everything else in the column is.
+    const navWords = words
+      .filter(
+        (w) =>
+          w.confidence >= 0.3 &&
+          NAV_RE.test(w.text) &&
+          !/^(片库|腾讯视频|VIP会员|VIP)$/.test(w.text) &&
+          w.y > 140 &&
+          w.y < 760,
+      )
+      .sort((a, b) => a.x - b.x);
+    let navCluster: OcrScreenWord[] = [];
+    let best: OcrScreenWord[] = [];
+    for (const w of navWords) {
+      if (!navCluster.length || w.x - navCluster[navCluster.length - 1].x <= 90) {
+        navCluster.push(w);
+      } else {
+        if (navCluster.length > best.length) best = navCluster;
+        navCluster = [w];
+      }
+    }
+    if (navCluster.length > best.length) best = navCluster;
+    this.lastNavItems = best.map((w) => ({
+      title: w.text,
+      x: Math.round(w.x + w.w / 2),
+      y: Math.round(w.y + w.h / 2),
+    }));
     let pairs: string[] = [];
     // A detail page is the one trustworthy rating source: capture the
     // verified (title → score) so list badges can be overridden when
@@ -206,8 +244,13 @@ export class TencentUiState {
         }
       }
     }
+    // Channel-home hero cards (热播榜大卡) rotate and PLAY on click —
+    // pairing them would invite a click that plays an unverified film
+    // (14:23 session: 庇护之地 9.7 hero card clicked → played whatever
+    // card was under the cursor). Hero scores stay visible in hints as
+    // references only; pairs come from list pages and details.
     this.lastListPairs =
-      rating && !watchedPage && !homeLike
+      rating && !watchedPage && !homeLike && !channelHome
         ? buildPairs(words, { seenTitles: this.seenTitles, detailPage, verifiedScores: this.detailVerifiedScores })
         : [];
     for (const p of this.lastListPairs) {
@@ -330,6 +373,13 @@ export class TencentUiState {
     const heroHint = heroCard
       ? "\n（注意：带评分的「立即播放」旁没有详情页特征（简介/选集/播放列表）——当前是频道首页/列表大卡片而非详情页。首页大卡片会自动轮播，点「立即播放」前先确认当前展示卡片的片名与评分确实对应，评分达标再点，否则可能打开轮播到的别的片）"
       : "";
+    // Channel home (热播榜大卡): the hero cards rotate and PLAY on click
+    // (14:23 session: 庇护之地 9.7 hero was clicked and played whatever
+    // card was under the cursor). Tell the model to scroll into the list
+    // page instead of clicking the heroes.
+    const channelHomeHint = channelHome
+      ? "\n（当前是频道首页（热播榜大卡）：大卡评分仅作参考，大卡会自动轮播且点卡直接播放——不要点大卡。向下滚动进入列表页（出现「最热/高分好评」筛选栏）再按评分配对选片，或点顶部「高分好评」排序）"
+      : "";
     // 「播放中」position decides what it means. In the top strip
     // (y<140, Tencent's mini-player / resume banner) it is the app
     // auto-resuming a previously closed video — NOT evidence the task
@@ -430,7 +480,7 @@ export class TencentUiState {
     // window move reset Tencent to home) scrolled the rated home feed
     // hunting for 马腾你别走 9.7. Steer it to the 电影 channel instead.
     const homeHint = homeLike
-      ? "\n（当前是首页/导航页——【不是电影频道列表】：即使本屏带评分卡（如 9.7 推荐位），首页卡片点卡会【直接播放】无关内容，评分也不代表频道候选池；窗口移动/最大化会让腾讯视频重置回首页。请点左侧导航「电影」（x≈200, y≈370）重新进入频道列表，在频道页滚动读取各片评分挑 ≥9 候选，再点片名坐标进详情页复核——不要在首页点卡片/滚动找片）"
+      ? "\n（当前是首页/导航页——【不是电影频道列表】：即使本屏带评分卡（如 9.7 推荐位），首页卡片点卡会【直接播放】无关内容，评分也不代表频道候选池；窗口移动/最大化会让腾讯视频重置回首页。请点左侧导航「电影」重新进入频道列表（窗口可能在副屏——用最近 ocr 输出中「电影」项的实际坐标，别用主屏坐标），在频道页滚动读取各片评分挑 ≥9 候选，再点片名坐标进详情页复核——不要在首页点卡片/滚动找片）"
       : "";
     const hints =
       (pairs.length ? `\n\n【评分-片名配对】（点片名坐标打开详情，不会错位）：\n${pairs.join("\n")}` : "") +
@@ -441,6 +491,7 @@ export class TencentUiState {
       ratingGuard +
       seenDetailHint +
       heroHint +
+      channelHomeHint +
       listHint +
       homeHint +
       seenHint +
@@ -459,6 +510,7 @@ export class TencentUiState {
       verb,
       pairs: this.lastListPairs,
       miniPlayingTitle: this.miniPlayingTitle,
+      navItems: this.lastNavItems,
       lastOcrDetail: this.lastOcrDetail,
       lastOcrList: this.lastOcrList,
       lastOcrChannelHome: this.lastOcrChannelHome,

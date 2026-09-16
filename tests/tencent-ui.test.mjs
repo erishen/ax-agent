@@ -59,7 +59,7 @@ test("processOcr: nav home with rated cards → homeHint, no pairs (16:43 sessio
   assert.doesNotMatch(hints, /【评分-片名配对】/);
 });
 
-test("processOcr: channel home (热播榜+9.3) → channel hint, pairs allowed (17:07 session)", () => {
+test("processOcr: channel home (热播榜+9.3) → hero hint, pairs suppressed (14:23 session)", () => {
   const tui = new TencentUiState();
   const words = [
     W("电影热播榜第1名", 360, 424, 127, 19),
@@ -69,7 +69,11 @@ test("processOcr: channel home (热播榜+9.3) → channel hint, pairs allowed (
   ];
   const { hints } = tui.processOcr(words);
   assert.doesNotMatch(hints, /首页\/导航页/);
-  assert.match(hints, /【评分-片名配对】/);
+  // Hero cards rotate and PLAY on click — pairing them invites a click
+  // that plays an unverified film (14:23: 庇护之地 9.7 hero clicked,
+  // played whatever was under the cursor).
+  assert.match(hints, /频道首页/);
+  assert.doesNotMatch(hints, /【评分-片名配对】/);
 });
 
 test("processOcr: playing player → playingHint (16:33 session)", () => {

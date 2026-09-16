@@ -183,3 +183,24 @@ test("guard: nav-home LEFT NAV click (x<250) still allowed (电影 entry)", () =
   assert.equal(r.blocked, undefined);
   assert.equal(r.note, "");
 });
+
+test("guard: click on a left-nav item passes even at secondary-screen x (14:23)", () => {
+  // The nav column sits at x≈1750 on a secondary-screen window — far past
+  // the x≥300 card-zone threshold that used to block the correct 电影 nav
+  // click as a "card-area" click.
+  const r = buildClickGuard({
+    ...base,
+    x: 1790,
+    y: 357,
+    verb: "单击",
+    pairs: [],
+    lastOcrDetail: false,
+    lastOcrList: false,
+    lastOcrChannelHome: false,
+    lastOcrPlayer: false,
+    navItems: [{ title: "电影", x: 1802, y: 357 }],
+  });
+  assert.equal(r.blocked, undefined);
+  assert.match(r.note, /导航/);
+  assert.match(r.note, /电影/);
+});

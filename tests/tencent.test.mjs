@@ -380,3 +380,18 @@ test("detectPage: channel-home hero badge with 白 prefix stays channelHome (19:
   assert.equal(f.channelHome, true);
   assert.equal(f.homeLike, false);
 });
+
+test("detectPage: update toast 已为您更新到最新内容 does not flip channelHome to a list (14:23)", () => {
+  // The toast's "最新" used to match the 最热|最新 exclusion and turn the
+  // channel-home hero feed into a plain page — pairs survived and the hero
+  // card click played an unverified film.
+  const words = [
+    W("已为您更新到最新内容", 2476, 187, 146, 17),
+    W("电影热播榜第1名", 1948, 482, 202, 17),
+    W("白9.3分", 1948, 482, 202, 17),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, true);
+  assert.equal(f.listPage, false);
+  assert.equal(f.homeLike, false);
+});
