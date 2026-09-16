@@ -134,7 +134,15 @@ pub fn ax_memory_add(app: tauri::AppHandle, name: String) -> Result<(), String> 
     let merged = merge_memory(mem.apps, name, now_unix());
     let file = MemoryFile { apps: merged };
     let json = serde_json::to_string_pretty(&file).map_err(|e| format!("序列化 memory.json 失败: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("写入 memory.json 失败: {e}"))
+    std::fs::write(&path, json).map_err(|e| format!("写入 memory.json 失败: {e}"))?;
+    // memory.json records which apps the user opens (usage habits = personal
+    // data): keep it owner-only like llm.json / sessions.md (was 0644).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 /// All remembered apps, sorted by usage (count desc, then name).

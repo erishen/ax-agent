@@ -83,6 +83,17 @@ export function dangerousReason(name: string, args: Record<string, unknown>): st
     case "clipboard_get": {
       return "读取剪贴板会把其中内容（可能含密码/验证码/敏感文本）注入模型上下文并发往 LLM API，需要你确认。";
     }
+    case "fs_scan": {
+      // Read-only, but scanning home/personal folders exposes file names,
+      // sizes and mtimes (often personal: 简历/证件/聊天导出…) to the model
+      // and its LLM API — same privacy bar as clipboard_get. Non-personal
+      // paths (/tmp, project roots, …) flow without confirmation.
+      const p = String(args.path ?? "").trim() || ".";
+      const personal =
+        p === "~" || p.startsWith("~/") || p.startsWith("/Users/");
+      if (!personal) return "";
+      return "扫描主目录/用户目录会把文件名、大小、修改时间（可能含个人文件）注入模型上下文并发往 LLM API，需要你确认。";
+    }
     case "click":
     case "named_action":
     case "menu_click": {

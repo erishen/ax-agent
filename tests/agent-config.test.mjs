@@ -89,6 +89,15 @@ test("DANGER_WORDS covers the confirmation vocabulary", () => {
   }
 });
 
+test("dangerousReason: fs_scan confirms personal paths, not project paths", () => {
+  assert.ok(dangerousReason("fs_scan", { path: "~" }).includes("确认"));
+  assert.ok(dangerousReason("fs_scan", { path: "~/Desktop" }).includes("确认"));
+  assert.ok(dangerousReason("fs_scan", { path: "/Users/alice/Downloads" }).includes("确认"));
+  assert.equal(dangerousReason("fs_scan", { path: "/tmp" }), "");
+  assert.equal(dangerousReason("fs_scan", { path: "/Users/alice/work/proj" }).includes("确认") ? "yes" : "no", "yes");
+  assert.equal(dangerousReason("fs_scan", {}), "");
+});
+
 test("policy constants are present and sane", () => {
   assert.match(SYSTEM_PROMPT, /AX Agent/);
   assert.match(SYSTEM_PROMPT, /步数是稀缺资源/);
