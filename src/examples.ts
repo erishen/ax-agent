@@ -112,9 +112,9 @@ const APP_BLOCKLIST = new Set([
   // Self-drawn UIs (no semantic AX labels): generic templates fail on them.
   // Tencent Video ships as QQLive.app; both bundle-name spellings appear in
   // the scan across locales. The blocklist only gates the installed-app
-  // template pool — hand-written tasks (PINNED_AGENT below, apps.local.json
-  // extra_tasks) run the OCR path and are NOT affected, so Tencent Video
-  // still gets its curated OCR-based tasks.
+  // template pool — hand-written tasks (apps.local.json extra_tasks) run
+  // the OCR path and are NOT affected, so Tencent Video still gets its
+  // curated OCR-based tasks.
   "qqlive",
   "tenvideo",
 ]);
@@ -169,44 +169,16 @@ const BUILTIN_AGENT: ExampleTask[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Pinned tasks that are ALWAYS the first chips (user's own curated tasks).
-// Hand-written tasks bypass APP_BLOCKLIST — they are authored for the target
-// app's real capabilities (self-drawn UIs run the OCR path).
+// Pinned tasks that are ALWAYS the first chips. Only GENERIC system-app
+// tasks live here (usable by any machine/user). Personal tasks — anything
+// referencing the user's own profile, interests or accounts (网易云音乐,
+// 腾讯视频, WeChat …) — live in the gitignored apps.local.json
+// `extra_tasks` (template: apps.local.example.json) and are NOT committed.
+// Hand-written tasks bypass APP_BLOCKLIST — they are authored for the
+// target app's real capabilities (self-drawn UIs run the OCR path).
 // ---------------------------------------------------------------------------
 
 const PINNED_AGENT: ExampleTask[] = [
-  {
-    label: "🎵 网易云音乐按喜好推歌",
-    task:
-      "打开网易云音乐。网易云音乐是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主：" +
-      "先了解我的画像，用 profile_search 查询「职业经历 年龄 人格特点」" +
-      "（注意：我的资料库没有现成的音乐偏好，拿到画像特征后据此推断我可能喜欢的音乐类型，" +
-      "例如 （画像推断音乐类型：流行音乐/氛围配乐/解压治愈类））。" +
-      "若打开后窗口空白、ocr 读不到任何文字（应用被强杀或更新后 CEF 渲染异常）：" +
-      "先从菜单栏正常退出应用（「网易云音乐」→「退出」），等 2-3s 后重新 open_app，再继续——" +
-      "不要在白屏窗口上反复 wait/点击。" +
-      "再用 ocr 读网易云首页的推荐歌单主题（网易云按喜好推）和搜索框历史关键词，看平台行为信号。" +
-      "结合画像推断与平台信号，点「每日推荐」卡进入今日歌单（按音乐口味生成、每天 6:00 更新），" +
-      "或点下方推荐歌单卡进歌单，在歌曲列表里结合画像挑一首最接近的歌（ocr 读歌名+歌手），点歌名行播放。" +
-      "播放成功的证据是底部播放栏的歌名变成你刚点的那首" +
-      "（底部播放栏常驻显示当前播放，哪怕是我之前听的旧歌——旧歌【不算】任务证据）。" +
-      "最后把歌名、歌手、以及推荐理由（基于我的什么画像特征推断）一起报告给我",
-    source: "builtin",
-  },
-  {
-    label: "🎬 腾讯视频按喜好推片",
-    task:
-      "打开腾讯视频。腾讯视频是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主：" +
-      "先了解我的画像，用 profile_search 查询「职业经历 年龄 人格特点」" +
-      "（注意：我的资料库没有现成的观影偏好，拿到画像特征后据此推断我可能喜欢的题材，" +
-      "例如 （画像推断题材：高质感剧情/悬疑推理/职场现实或解压治愈类））。" +
-      "再用 ocr 读腾讯视频首页的「你正在追」和热搜榜，看平台行为信号。结合画像推断与平台信号，" +
-      "进入「电影」频道，逐个浏览影片评分，挑一部评分 9 分以上、且题材和画像推断口味最接近的电影" +
-      "（详情页 ocr 复核评分与题材都符合），点击播放并确认画面真的在播放" +
-      "（ocr 看到「播放中」或播放器控件出现）。" +
-      "最后把片名、评分、以及推荐理由（基于我的什么画像特征推断）一起报告给我",
-    source: "builtin",
-  },
   {
     label: "🗂 访达最近文件速览",
     task:
