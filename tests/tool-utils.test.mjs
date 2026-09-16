@@ -341,3 +341,23 @@ test("renderMenu: indented lines with paths and submenu counts", () => {
     "  Export path=[2]",
   ]);
 });
+
+// --- open_app argument guard ---
+
+import { openAppArgGuard } from "../src/tool-utils.ts";
+
+test("openAppArgGuard: short app names pass", () => {
+  assert.equal(openAppArgGuard("网易云音乐"), null);
+  assert.equal(openAppArgGuard("TextEdit"), null);
+  assert.equal(openAppArgGuard("系统设置"), null);
+  assert.equal(openAppArgGuard("Adobe Photoshop 2024"), null);
+});
+
+test("openAppArgGuard: pasted task sentence is refused with guidance", () => {
+  const long = "网易云音乐。网易云音乐是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主";
+  const r = openAppArgGuard(long);
+  assert.ok(r, "long argument must be refused");
+  assert.match(r, /疑似把完整任务描述传了进来/);
+  assert.match(r, /只填应用名称/);
+  assert.match(r, /网易云音乐/);
+});

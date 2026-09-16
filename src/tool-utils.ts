@@ -236,3 +236,17 @@ export function renderMenu(entry: MenuEntry, prefix: string): string[] {
     })
     .flat();
 }
+
+// --- open_app argument guard (task-sentence paste defense) ---
+
+/** App names are short (网易云音乐=5, TextEdit=8). A longer open_app argument
+ *  is almost always the whole task sentence pasted in — return an actionable
+ *  refusal so the agent retries with just the name, instead of a confusing
+ *  "app not found". Null when the argument looks fine. */
+export function openAppArgGuard(target: string): string | null {
+  if (target.length <= 24) return null;
+  return (
+    `⚠️ open_app 的 app 参数异常：收到 ${target.length} 字符（「${target.slice(0, 24)}…」），疑似把完整任务描述传了进来。` +
+    `app 参数只填应用名称本身（如「网易云音乐」「TextEdit」）。请用应用名重试，不要粘贴任务说明。`
+  );
+}

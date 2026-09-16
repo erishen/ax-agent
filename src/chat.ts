@@ -69,6 +69,7 @@ import {
   asText,
   filterMenu,
   friendlyLlmError,
+  openAppArgGuard,
   parseCommand,
   renderMenu,
   stepHeading,
@@ -552,7 +553,10 @@ async function toolListApps(state: SessionState, _args: Record<string, unknown>)
 }
 
 async function toolOpenApp(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
-        const app: AxAppInfo = await openApp(argStr(args, "app"));
+        const target = argStr(args, "app");
+        const argGuard = openAppArgGuard(target);
+        if (argGuard) return { result: argGuard, state };
+        const app: AxAppInfo = await openApp(target);
         // No focusSelf() here: in drive mode the target app must KEEP the
         // focus it just got — stealing it back breaks every subsequent
         // click_at (synthetic mouse goes to the frontmost app). The window

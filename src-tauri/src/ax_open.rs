@@ -20,6 +20,15 @@ pub fn open_application(target: &str) -> Result<AxAppInfo, String> {
     if needle.is_empty() {
         return Err("应用名为空".to_string());
     }
+    // App names are short; a long argument means the caller pasted the whole
+    // task sentence in. Fail with guidance (defense in depth — the TS tool
+    // layer already guards, but RPC/other callers bypass it).
+    let len = needle.chars().count();
+    if len > 24 {
+        return Err(format!(
+            "app 参数疑似包含任务描述（{len} 字符，应 ≤24）：只填应用名称（如「网易云音乐」「TextEdit」），不要粘贴任务说明"
+        ));
+    }
 
     // Already running? Re-activate (and unhide) it. Match by bundle id first
     // (locale-proof: TextEdit runs as 文本编辑 on a zh-CN system, so a name
@@ -291,5 +300,13 @@ mod tests {
         // unknown phrases resolve to nothing (caller falls back to open -a)
         assert_eq!(alias_bundle("微信"), None);
         assert_eq!(alias_bundle(""), None);
+    }
+
+    #[test]
+    fn long_app_arguments_are_rejected_before_any_launch() {
+        let long = "网易云音乐。网易云音乐是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主";
+        let err = open_application(long).unwrap_err();
+        assert!(err.contains("疑似包含任务描述"), "unexpected error: {err}");
+        assert!(err.contains("只填应用名称"), "unexpected error: {err}");
     }
 }
