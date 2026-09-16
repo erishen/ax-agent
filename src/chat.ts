@@ -438,7 +438,7 @@ function helpReply(state: SessionState): SessionState {
 // LLM agent mode (🤖): the model plans, we execute tools, it reports back
 // ---------------------------------------------------------------------------
 
-import { agentTools, llmChatStream, llmConfigured, type LlmMessage } from "./llm";
+import { agentTools, llmChatStream, llmConfigured, type LlmConfigured, type LlmMessage } from "./llm";
 import { mcpLocalCall, memoryList } from "./api";
 
 /** Monotonic id for assistant tool-step cards (🤖 N/25 bubbles). */
@@ -983,8 +983,26 @@ export async function handleUtterance(
   // Unified mode: the LLM plans and executes everything natural-language;
   // the fixed parser below is only an offline fallback when no model is
   // configured (⚙️ settings or AX_EXPLORER_LLM_* in .env).
+  let info: LlmConfigured;
   try {
-    const info = await llmConfigured();
+    info = await llmConfigured();
+  } catch {
+    // Transient probe failure (IPC hiccup, backend still starting): retry
+    // once. Never silently fall back to offline commands here — 22:22 session
+    // showed the probe fail right after 'hi' had worked, dropping the task
+    // into the offline path with a misleading "configure the LLM" hint even
+    // though the config existed.
+    await new Promise((r) => setTimeout(r, 300));
+    try {
+      info = await llmConfigured();
+    } catch {
+      return reply(
+        withUser,
+        "⚠️ 模型配置检测失败（后端可能还在启动或 IPC 瞬断）。请稍等片刻重发；若持续失败，检查 ⚙️ 设置后重启应用。",
+      );
+    }
+  }
+  try {
     if (info.configured) {
       // 「继续」 resumes the paused run with a fresh step budget.
       if (cmd?.kind === "continue") {
@@ -1013,7 +1031,8 @@ export async function handleUtterance(
       }
     }
   } catch {
-    // Config probe failed (e.g. backend restarting) → parser fallback.
+    // Unreachable in practice: info was resolved above; keep a safe fallback
+    // to the offline parser for backend edge cases.
   }
 
   switch (cmd?.kind) {
