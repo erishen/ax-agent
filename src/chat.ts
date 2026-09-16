@@ -38,6 +38,7 @@ import {
 import {
   argsText,
   asText,
+  extractAppNameFromLongArg,
   friendlyLlmError,
   parseCommand,
   stepHeading,
@@ -171,8 +172,9 @@ function reply(state: SessionState, text: string): SessionState {
 
 async function cmdOpen(state: SessionState, target: string): Promise<SessionState> {
   let next = reply(state, `正在打开「${target}」…`);
-  try {
-    const app: AxAppInfo = await openApp(target);
+  // Open + warm outline + report, with an optional recovery note.
+  const openAndReport = async (name: string, note: string): Promise<SessionState> => {
+    const app: AxAppInfo = await openApp(name);
     const withPid: SessionState = {
       ...next,
       pid: app.pid,
@@ -187,12 +189,28 @@ async function cmdOpen(state: SessionState, target: string): Promise<SessionStat
       const outline = await treeOf(app.pid, 10);
       return reply(
         { ...withPid, outline },
-        `✅ 已打开 ${app.name}（pid ${app.pid}）\n当前界面里的可操作元素：\n${renderOutline(outline) || "（未发现常规元素）"}`,
+        `${note}✅ 已打开 ${app.name}（pid ${app.pid}）\n当前界面里的可操作元素：\n${renderOutline(outline) || "（未发现常规元素）"}`,
       );
     } catch {
-      return reply(withPid, `✅ 已打开 ${app.name}（pid ${app.pid}）。说「读一下」查看它的界面。`);
+      return reply(withPid, `${note}✅ 已打开 ${app.name}（pid ${app.pid}）。说「读一下」查看它的界面。`);
     }
+  };
+  try {
+    return await openAndReport(target, "");
   } catch (e) {
+    // 17:40 session: the parsed target was the whole task sentence
+    // ("打开访达，read_screen 浏览…"), so openApp failed on the Rust guard.
+    // If exactly one known running app name appears in the text, recover by
+    // opening that instead of failing the whole task.
+    try {
+      const apps = await listApps();
+      const hit = extractAppNameFromLongArg(target, apps.map((a) => a.name));
+      if (hit) {
+        return await openAndReport(hit, `⚠️ 参数过长（疑似粘贴了任务描述），已自动提取应用名「${hit}」。\n`);
+      }
+    } catch {
+      /* recovery is best-effort */
+    }
     return reply(next, `❌ 打开失败：${asText(e)}`);
   }
 }
