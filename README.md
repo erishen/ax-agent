@@ -1,284 +1,342 @@
 # AX Agent → macOS Computer Use
 
-**Computer use for macOS** — 让 agent 能「看懂 + 自由操作」任意正在运行的应用。
-以 **Rust + Tauri 2 + React + TypeScript** 构建，语义操作通道走 **macOS Accessibility
-API（AXUIElement）**，CGEvent 合成输入（鼠标/键盘/滚轮）作兜底（见 TODO.md 里程碑）。
+**Computer use for macOS** — let an agent "see and operate" any running application.
+Built with **Rust + Tauri 2 + React + TypeScript**: semantic operations go through the
+macOS Accessibility API (`AXUIElement`), with CGEvent-synthesized input
+(mouse / keyboard / scroll) as a fallback (see [TODO.md](./TODO.md) for the roadmap).
 
-不是快捷方式工具（对比 sprite），而是通用的界面观测 + 操控基座。
+Not a shortcut tool — a general-purpose UI observation + control base.
 
-## 能力（当前）
+## Capabilities (current)
 
-**💬 会话（默认界面）—— 用说话的方式操作应用**
+**💬 Chat (default UI) — operate apps by talking**
 
-打开应用即是对话框，直接下指令，助手执行并汇报结果：
-
-```
-你：打开 TextEdit
-助手：✅ 已打开 TextEdit（pid 1234），界面里的可操作元素：…
-你：输入 你好，今天天气不错
-助手：✅ 已把文本写入「未命名」
-你：点击 显示字体
-助手：✅ 已对「显示字体」执行 AXPress
-```
-
-支持的指令（中英文均可，说法可以随意些）：
-`打开 <应用>` · `应用列表` · `读一下 [应用]` · `找 <关键词>` ·
-`点击 <关键词>` · `输入 <文本> [@字段]` · `聚焦 <关键词>` ·
-`移动窗口 <x> <y>` · `点 <x> <y>`（查坐标下的元素） · `帮助`
-
-会话内部维护「当前应用 + 界面大纲」，关键词定位到具体元素后执行对应的
-AX 命令（`ax_perform_action` / `ax_set_value` / `ax_focus_element`…）。
-
-**🤖 智能模式（LLM 代理）**：输入框左侧切换。开启后由大模型规划并自动执行多步操作：
+Opening the app gives you a chat box. Just give a command; the assistant executes
+and reports back:
 
 ```
-你：帮我在备忘录记一下明天买牛奶
+You:      Open TextEdit
+Assistant: ✅ Opened TextEdit (pid 1234). Actionable elements: …
+You:      Type 你好，今天天气不错
+Assistant: ✅ Text written to "Untitled"
+You:      Click 显示字体
+Assistant: ✅ AXPress performed on "显示字体"
+```
+
+Supported commands (Chinese or English, phrasing is flexible):
+`打开 <app>` · `应用列表` · `读一下 [app]` · `找 <keyword>` ·
+`点击 <keyword>` · `输入 <text> [@field]` · `聚焦 <keyword>` ·
+`移动窗口 <x> <y>` · `点 <x> <y>` (inspect element at coordinates) · `帮助`
+
+The session keeps a "current app + UI outline"; keywords resolve to concrete
+elements, then the matching AX command runs
+(`ax_perform_action` / `ax_set_value` / `ax_focus_element` …).
+
+**🤖 Smart Mode (LLM agent)** — toggle on the left of the input box. The model
+plans and executes multi-step operations automatically:
+
+```
+You: 帮我在备忘录记一下明天买牛奶
 🤖 open_app app=备忘录
 🤖 type_text text=明天买牛奶
 🤖 done 已在备忘录新建笔记并写入「明天买牛奶」
 ```
 
-任意 OpenAI 兼容 API（DeepSeek / Qwen / Ollama / LM Studio…）：点输入框右侧
-**⚙️** 填 API 地址、密钥、模型，可一键测试连接。密钥保存在本机
-`app_data_dir/llm.json`，HTTP 请求从 Rust 端发出，不经过 webview。
+Works with any OpenAI-compatible API (DeepSeek / Qwen / Ollama / LM Studio…):
+click **⚙️** on the right of the input box to set the API URL, key and model,
+with a one-click connection test. The key is stored locally in
+`app_data_dir/llm.json`; HTTP requests are issued from the Rust side, never the webview.
 
-模型可用的工具（34 个，见 `src/llm.ts` DESKTOP_TOOLS + 会话指令）：应用管理
-（`list_apps` / `open_app` / `frontmost_app`）、观察（`read_screen` / `ocr` / `find` /
-`element_at` / `screen_info` / `wait_for`）、语义操作（`click` / `type_text` / `focus` /
-`named_action` / `scroll_to` / `menu_bar` / `menu_click`）、合成输入（`click_at` /
-`double_click_at` / `right_click_at` / `drag` / `scroll` / `key` / `type_keys`）、
-窗口（`move_window` / `resize_window`）、桌面能力（`clipboard_*` / `notify` /
-`open_url` / `speak` / `profile_search` / `fs_scan` / `fs_move`）、本地 MCP
-（`mcp_local_*`）与收尾 `done`。步数上限 25 步，超限暂停后「继续」可携带完整
-上下文续跑（新额度）。
+Tools available to the model (**34**, see `DESKTOP_TOOLS` in `src/llm.ts` plus chat
+commands): app management (`list_apps` / `open_app` / `frontmost_app`), observation
+(`read_screen` / `ocr` / `find` / `element_at` / `screen_info` / `wait_for`), semantic
+actions (`click` / `type_text` / `focus` / `named_action` / `scroll_to` / `menu_bar` /
+`menu_click`), synthesized input (`click_at` / `double_click_at` / `right_click_at` /
+`drag` / `scroll` / `key` / `type_keys`), windows (`move_window` / `resize_window`),
+desktop (`clipboard_*` / `notify` / `open_url` / `speak` / `profile_search` /
+`fs_scan` / `fs_move`), local MCP (`mcp_local_*`) and the final `done`. Hard budget
+of 25 steps per run; when exhausted, "继续" resumes with the full context preserved.
 
-### 安全机制
+### Safety mechanisms
 
-- **危险操作确认**：元素命中删除/发送/退出登录等词时暂停，等用户批准才执行
-- **过期快照守卫**：坐标与合成输入类操作（click_at / drag / scroll / type_keys…）
-  在最近一次观察（ocr / read_screen / open_app）超过 60s 后被拒绝，提示先重新观察
-- **密码框保护**：焦点或目标元素为 AXSecureTextField / AXPasswordField 时拒绝自动
-  输入 —— 密码等敏感信息一律由用户本人输入
+- **Dangerous-operation confirmation**: element actions matching delete / send /
+  log-out words pause and wait for your approval before executing. Also covered:
+  real `fs_move`, `clipboard_get`, Enter/Return key, window close/minimize buttons.
+- **Personal-path `fs_scan` confirmation**: scanning `~` / `/Users/…` folders
+  pauses for approval (file names/sizes could be personal and would be sent to
+  the LLM API with the context); non-personal paths (`/tmp`, project roots) flow.
+- **Stale-snapshot guard**: coordinate / synthesized input operations
+  (`click_at` / `drag` / `scroll` / `type_keys` …) are rejected when the latest
+  observation (`ocr` / `read_screen` / `open_app`) is older than 60s — re-observe first.
+- **Password-field protection**: auto-input is refused when the target is an
+  AXSecureTextField / AXPasswordField — sensitive input stays with the human.
 
-**🔎 检查器（高级）** —— 原树形查看器：手动选应用、看属性表、逐元素操作，
-供调试和开发 agent 策略时用。
+**🔎 Inspector (advanced)** — pick an app, inspect the property table, drive
+elements one by one. For debugging and developing agent strategies.
 
-**观测（observe）**
+**Observation**
 
-- 权限检测 + 开发模式诊断：显示进程链与 responsible process，明确该给哪个 App 授权；
-  每 1.5s 自动轮询，授权后自动进入
-- `NSWorkspace.runningApplications` 枚举 GUI 应用；`ax_open_app` 按名启动/聚焦应用
-- `AXUIElementCopyAttributeValue` 有界深度遍历 AX 树，节点属性（Role/Title/Value/…）
-  与 AXValue（位置/大小）解码，2s 消息超时
-- `AXUIElementCopyElementAtPosition`（system-wide）：给定屏幕坐标，返回该点下的元素
+- Permission check + dev-mode diagnostics: shows the process chain and
+  responsible process so you know exactly which app to authorize; polls every
+  1.5s and proceeds automatically once granted.
+- `NSWorkspace.runningApplications` enumerates GUI apps; `ax_open_app` launches /
+  focuses by name.
+- Bounded-depth AX tree traversal with `AXUIElementCopyAttributeValue`; node
+  attributes (Role / Title / Value / …) and AXValues (position / size) decoded,
+  2s message timeout.
+- `AXUIElementCopyElementAtPosition` (system-wide): resolve the element under a
+  screen coordinate.
 
-**操作（act）——语义层，无需合成事件，元素可被遮挡/离屏**
+**Acting — semantic layer, no synthesized events; elements may be occluded or off-screen**
 
-- `AXUIElementPerformAction`：`AXPress` 等元素原生动作（按子索引路径定位）
-- `ax_named_action`：任意具名 AX 动作（`AXIncrement`/`AXDecrement`/`AXPick`/`AXShowMenu`…）
-- `ax_scroll_to_visible`：语义滚动（把离屏元素滚到可见区域）
-- `ax_scroll`：CGEvent 合成滚轮事件（大多数长列表没有 AX 滚动动作时用这个）
-- `ax_set_value`：写 `AXValue`（文本框输入的语义等价物）
-- `ax_focus_element`：写 `AXFocused` 抢键盘焦点
-- `ax_set_position`：写 `AXPosition` 移动窗口
-- UI：树 + 详情双栏，详情页内置操作按钮、AXValue 写入、聚焦
+- `AXUIElementPerformAction`: native element actions like `AXPress`
+  (addressed by child-index path).
+- `ax_named_action`: any named AX action (`AXIncrement` / `AXDecrement` /
+  `AXPick` / `AXShowMenu` …).
+- `ax_scroll_to_visible`: semantic scroll (bring off-screen elements into view).
+- `ax_scroll`: CGEvent-synthesized wheel events (most long lists expose no AX scroll).
+- `ax_set_value`: write `AXValue` (semantic equivalent of typing into a text field).
+- `ax_focus_element`: write `AXFocused` to grab keyboard focus.
+- `ax_set_position`: write `AXPosition` to move a window.
+- UI: tree + detail split view with action buttons, AXValue writing, focusing.
 
-#### 「聚焦」和「写入」是什么意思？
+#### What do "Focus" and "Write" mean?
 
-两者都是**写属性**，不是模拟键鼠：
+Both are *property writes*, not simulated key/mouse:
 
-| UI 按钮 | 实际操作 | 等价的人肉动作 | 适合 |
+| UI button | Actual operation | Human equivalent | Best for |
 | --- | --- | --- | --- |
-| **聚焦** | 写 `AXFocused = true` | 点一下该元素让它获得键盘焦点 | 输入前定位焦点、切换输入目标 |
-| **写入** | 写 `AXValue = "<文本>"` | 全选 + 输入新文本（原子替换整个内容） | 文本框/文本区的内容设置 |
-| （动作按钮） | `AXUIElementPerformAction(AXPress…)` | 点击按钮、勾选复选框 | 所有暴露了 action 的元素 |
-| （隐藏） | 写 `AXPosition = {x, y}` | 拖动窗口标题栏 | 移动窗口 |
+| **Focus** | Write `AXFocused = true` | Click the element to give it keyboard focus | Positioning focus before input |
+| **Write** | Write `AXValue = "<text>"` | Select-all + type new text (atomic replace) | Setting text fields/areas |
+| (action buttons) | `AXUIElementPerformAction(AXPress…)` | Click button, tick checkbox | Everything exposing an action |
+| (hidden) | Write `AXPosition = {x, y}` | Drag the window title bar | Moving windows |
 
-与 CGEvent 合成键鼠的区别：语义操作不占用真实鼠标键盘、不要求元素在屏幕可见、
-不会被遮挡挡住；但只能做「目标 App 明确暴露的」事情。两者互补：
+Compared with CGEvent-synthesized input: semantic operations don't occupy the real
+mouse/keyboard, don't require on-screen visibility, and aren't blocked by occluding
+windows — but they can only do what the target app explicitly exposes. The two
+complement each other:
 
-- 合成**滚动**（`ax_scroll`）：`scroll_at_position`（CGEvent 滚轮，多数长列表没有 AX 滚动动作）
-- 合成**键盘**（`ax_key` / `ax_type_keys`）：`press_key_combo`（enter/Esc/Cmd+F/方向键）
-  与 `type_text_synthetic`（逐键输入，Unicode payload 支持中文，触发随输入即搜索、
-  自动补全等逐键反应 —— 这是语义 AXValue 写入做不到的）
-- 合成**鼠标**（`ax_click` / `ax_double_click` / `ax_drag`）：坐标点击/双击/拖拽，
-  用于既没有 AX 动作、也探测不到元素的自绘控件（画布、地图、拖动滑块、内嵌网页）。
-  注意：HID 鼠标事件只会投给**最前台应用**，先激活目标应用再操作。
+- Synthesized **scroll** (`ax_scroll`): `scroll_at_position` (CGEvent wheel).
+- Synthesized **keyboard** (`ax_key` / `ax_type_keys`): `press_key_combo`
+  (enter/Esc/Cmd+F/arrows) and `type_text_synthetic` (per-keystroke input,
+  Unicode payload incl. Chinese; triggers search-as-you-type / autocomplete —
+  impossible via semantic AXValue writes).
+- Synthesized **mouse** (`ax_click` / `ax_double_click` / `ax_drag`): coordinate
+  clicks/drags for self-drawn controls with neither AX actions nor detectable
+  elements (canvas, map, sliders, embedded webviews). Note: HID mouse events only
+  go to the frontmost app — activate the target first.
 
-#### 完整示例（可直接跑，操作系统自带应用）
+#### Runnable examples (built-in macOS apps)
 
 ```bash
 cd src-tauri
 
-# 例 1：全自动驱动 TextEdit —— 定位文本区 → 聚焦 → 写入一段文字 → 移动窗口 → 验证
-cargo run --example textedit_demo        # 先确保 TextEdit 已打开（open -a TextEdit）
+# 1. Fully drive TextEdit: locate text area → focus → write → move window → verify
+cargo run --example textedit_demo        # open TextEdit first (open -a TextEdit)
 
-# 例 2：屏幕坐标点选 —— 问 "这个坐标下是什么元素？"（任意 App）
-cargo run --example probe_at -- 600 400   # 全局屏幕坐标（points，左上原点）
+# 2. Probe a screen coordinate: "what element is under this point?" (any app)
+cargo run --example probe_at -- 600 400   # global screen points, top-left origin
 
-# 例 3：合成键盘 —— 逐键输入（中文 OK）+ Cmd+Up/Cmd+S 快捷键
-cargo run --example keyboard_demo        # 需先打开 TextEdit 并新建文档
+# 3. Synthesized keyboard: per-keystroke typing (Chinese OK) + Cmd+Up/Cmd+S
+cargo run --example keyboard_demo        # open TextEdit and create a doc first
 
-# 例 4：WeChat 全链路压测 —— Cmd+F 搜索 → 逐键输入 → 点选结果 → 验证切换
-# （只读安全：目标是文件传输助手，不发送任何消息）
+# 4. WeChat end-to-end: Cmd+F search → type → click result → verify switch
+#    (read-only safe: target is 文件传输助手, no messages are sent)
 cargo run --example wechat_stress
 
-# 例 5：合成鼠标 —— 拖拽窗口标题栏（AX 不可见的拖拽）+ 单击/双击
-cargo run --example mouse_demo   # 需先打开 TextEdit 并保持其在前台
+# 5. Synthesized mouse: drag window title bar (AX-invisible) + single/double click
+cargo run --example mouse_demo           # open TextEdit and keep it frontmost
 
-# 例 6：菜单驱动 —— 读菜单栏树 → AXPick 逐级打开 → AXPress 叶子项（全语义）
+# 6. Menu-driven: read menu-bar tree → AXPick down → AXPress leaf (fully semantic)
 cargo run --example menu_demo
 ```
 
-`textedit_demo` 对应的 agent 决策序列（也是 UI 里各按钮背后的命令）：
+The agent decision sequence behind `textedit_demo` (also what the UI buttons issue):
 
 ```
-ax_list_apps        → 找到 com.apple.TextEdit 的 pid
-ax_tree(pid)        → 在树里找到 AXTextArea 节点（记录子索引路径）
-ax_focus_element    → 写 AXFocused=true   ←「聚焦」
-ax_set_value        → 写 AXValue="Hello…" ←「写入」
-ax_set_position     → 写 AXPosition={120,120}（移动窗口）
-ax_tree(pid)        → 重读验证 AXValue / AXFocused 生效
+ax_list_apps        → find the pid of com.apple.TextEdit
+ax_tree(pid)        → locate the AXTextArea node in the tree (record child-index path)
+ax_focus_element    → write AXFocused=true                ←「聚焦」
+ax_set_value        → write AXValue="Hello…"              ←「写入」
+ax_set_position     → write AXPosition={120,120} (move window)
+ax_tree(pid)        → re-read to verify AXValue / AXFocused took effect
 ```
 
-其它典型场景（同样命令组合，换目标 App 即可）：
+Other typical scenarios (same command combos, swap the target app):
 
-| 想做的事 | 命令组合 |
+| Goal | Command combo |
 | --- | --- |
-| 在备忘录/搜索框里输入文字 | `ax_tree` 定位文本框 → `ax_focus_element` → `ax_set_value` |
-| 点另一个 App 的某个按钮 | `ax_element_at` 点选或 `ax_tree` 定位 → `ax_perform_action(AXPress)` |
-| 把某 App 窗口挪到屏幕角落 | `ax_tree` 找 AXWindow → `ax_set_position` |
-|切换输入焦点到另一个字段| `ax_focus_element` |
+| Type into Notes / a search box | `ax_tree` locate text field → `ax_focus_element` → `ax_set_value` |
+| Click a button in another app | `ax_element_at` pick or `ax_tree` locate → `ax_perform_action(AXPress)` |
+| Move an app window to a corner | `ax_tree` find AXWindow → `ax_set_position` |
+| Switch input focus to another field | `ax_focus_element` |
 
-#### 示例任务（输入框上方的 chips）
+#### Example-task chips (above the input box)
 
-chips 不是写死的，而是按你的机器动态生成：
+Chips are not hardcoded — generated dynamically for your machine:
 
-1. **已安装应用**（`ax_installed_apps`）：扫描 `/Applications`、`/System/Applications`、
-   `~/Applications`（含一层子目录），读 Info.plist 取 `CFBundleName`/`CFBundleIdentifier`，
-   用 `NSFileManager.displayNameAtPath` 取本地化名 —— 所以你的微信/QQ/腾讯视频/印象笔记
-   都会出现；正在运行的应用优先。
-2. **tsm-hub 网关目录**（`llm_catalog`）：`/v1/skills`、`/v1/tools`、`/v1/mcps` 变成
-   技能/工具/MCP 任务 chips。
-3. **内置兜底**：网关不可用或离线时永远有可用建议。
+1. **Installed apps** (`ax_installed_apps`): scans `/Applications`,
+   `/System/Applications`, `~/Applications` (one level deep), reads Info.plist for
+   `CFBundleName` / `CFBundleIdentifier`, localizes names via
+   `NSFileManager.displayNameAtPath` — your WeChat / QQ / Tencent Video / Evernote
+   all show up; running apps rank first.
+2. **tsm-hub gateway catalog** (`llm_catalog`): `/v1/skills`, `/v1/tools`,
+   `/v1/mcps` become skill / tool / MCP task chips.
+3. **Built-in fallback**: usable suggestions whenever the gateway is down or offline.
 
-点 **🔄 换一批** 重新洗牌；5 分钟缓存，切换 🤖 模式自动重建。
+Click **🔄 换一批** to reshuffle; 5-minute cache, rebuilt on entering 🤖 mode.
 
-启动的可靠性：系统把本机 CLI locale 解析为英文时，`open -a 备忘录` 会失败而
-`open -b com.apple.Notes` 总是成功 —— `ax_open_app` 会先把中文名解析成 bundle id
-再启动，两种说法都能打开。
+Personal tasks (e.g. app-specific "pick by my taste" workflows) live in a
+git-ignored local config (`apps.local.json`), never in the codebase.
 
-查看本机扫描结果：
+Launch reliability: when the CLI locale resolves to English, `open -a 备忘录` fails
+but `open -b com.apple.Notes` always works — `ax_open_app` resolves Chinese names to
+bundle ids first, so both phrasings open the app.
+
+Inspect your machine's scan results:
 
 ```bash
-cd src-tauri && cargo run --example installed_apps   # 打印 display/bundle/bundle id + 路径
+cd src-tauri && cargo run --example installed_apps   # display/bundle/bundle id + path
 ```
 
-## 运行
+## Run
 
 ```bash
 pnpm install
-pnpm tauri dev      # 开发模式
-pnpm tauri build    # 产出 .app / .dmg（Dock 图标用 app-icon.svg 生成）
+pnpm tauri dev      # dev mode
+pnpm tauri build    # produces .app / .dmg (dock icon generated from app-icon.svg)
 ```
 
-### 提交前检查
+### Before committing
 
-- 完整验证：`make lint`（tsc + `clippy --all-targets -D warnings`）、`cargo test --lib`。
-- **开发纪律**：桌面开发只跑 `make dev`（tauri watch 自动重编译，Rust 改动以 watch
-  编译结果为准）；**不要并行跑 `cargo check` / `cargo build`** —— 与 watch 争用共享
-  `work/rust` target 会损坏宏缓存。watch 未在跑时再执行 `cargo test --no-default-features --lib`。
-- pre-commit hook（`.githooks/pre-commit`，已用 `git config core.hooksPath .githooks` 安装）：
-  对暂存的 `.ts` 改动自动跑 `tsc --noEmit` 做快速门禁；Rust 改动**不**在此检查——
-  Rust 请以 `make lint` / `cargo test` 为准。跳过门禁：`git commit --no-verify`。
+- Full verification: `make lint` (tsc + `clippy --all-targets -D warnings`),
+  `cargo test --lib`.
+- **Dev discipline**: for desktop work only run `make dev` (tauri watch
+  auto-recompiles; trust the watch output for Rust changes). **Never run
+  `cargo check` / `cargo build` in parallel** — contending for the shared
+  `work/rust` target with the watcher corrupts the macro cache. When no watch is
+  running, `cargo test --no-default-features --lib` is fine.
+- pre-commit hook (`.githooks/pre-commit`, installed via
+  `git config core.hooksPath .githooks`): runs `tsc --noEmit` on staged `.ts`
+  changes as a fast gate; Rust changes are **not** checked here — rely on
+  `make lint` / `cargo test`. Skip: `git commit --no-verify`.
 
-### 权限（重要）
+### Permissions (important)
 
-辅助功能权限授给 **responsible process**，不是 ax-agent 二进制本身：
+Accessibility permission goes to the **responsible process**, not the
+ax-agent binary itself:
 
-- `pnpm tauri dev`：给 **启动 dev 命令的 App**（Terminal / iTerm / VS Code / agent 宿主）
-  授权 —— 系统设置 → 隐私与安全性 → 辅助功能 → 「+」添加并勾选；
-  应用内权限页会显示进程链并高亮该勾选的 App
-- 打包后的 `.app`：给 **AX Agent** 本身授权
+- `pnpm tauri dev`: authorize the app that launched the dev command
+  (Terminal / iTerm / VS Code / the agent host) — System Settings → Privacy &
+  Security → Accessibility → 「+」add and tick it; the in-app permission page shows
+  the process chain and highlights the app to tick.
+- Packaged `.app`: authorize **AX Agent** itself.
 
-### 端口分配（workspace 约定）
+### Port allocation (workspace convention)
 
-| 项目 | vite 端口 | HMR 端口 |
+| Project | vite port | HMR port |
 | --- | --- | --- |
 | `sprite` | 1420 | 1421 |
 | `ax-agent` | 1520 | 1521 |
 
-## 结构
+## Structure
 
 ```
 ax-agent/
-├── index.html / src/           # React + TypeScript 前端
-│   ├── App.tsx                 # 权限门 / 会话↔检查器 Tab / 检查器视图
-│   ├── ChatView.tsx            # 💬 会话 UI（气泡、输入框）
-│   ├── chat.ts                 # 会话逻辑：命令模式 + agent 循环（runSteps）+ runTool 分发
-│   ├── tools/                  # 25 个工具实现，按领域分四模块 + shared 共享辅助
-│   │   ├── shared.ts           #   ToolResult / 观察快照 / tui-nui 状态机 / clamp / 大纲刷新
+├── index.html / src/           # React + TypeScript frontend
+│   ├── App.tsx                 # permission gate / Chat↔Inspector tabs / inspector view
+│   ├── ChatView.tsx            # 💬 chat UI (bubbles, input box)
+│   ├── chat.ts                 # session logic: command mode + agent loop (runSteps) + runTool dispatch
+│   ├── llm.ts                  # LLM tool schemas (DESKTOP_TOOLS) + chat completion
+│   ├── agent-config.ts         # system prompt / danger words / policy constants
+│   ├── tool-utils.ts           # command parsing, tool args validation, helpers
+│   ├── examples.ts             # built-in example task chips
+│   ├── finder-archive.ts       # Finder archive workflow (fs_scan / fs_move)
+│   ├── tencent.ts / netease.ts # Tencent Video / NetEase Music self-drawn-UI decision machines
+│   ├── tools/                  # tool implementations by domain + shared helpers
+│   │   ├── shared.ts           #   ToolResult / observation snapshot / UI state machine / clamp / outline refresh
 │   │   ├── observe.ts          #   list_apps · read_screen · wait_for · ocr · find
-│   │   ├── input.ts            #   click/type/focus/合成坐标点击滚动（含守卫）
+│   │   ├── input.ts            #   click/type/focus/synthesized coordinate clicks & scroll (with guards)
 │   │   ├── window.ts           #   move_window · resize_window · element_at · named_action
-│   │   └── misc.ts             #   open_app · menu_bar · menu_click · done · desktop 透传
-│   ├── llm.ts                  # LLM 工具 schema（DESKTOP_TOOLS）+ 对话补全
-│   ├── agent-config.ts         # 系统提示词 / 危险词 / 示例
-│   ├── api.ts / types.ts       # invoke 封装与类型
-│   ├── tencent-ui.ts / netease-ui.ts  # 腾讯视频 / 网易云音乐自绘 UI 决策状态机
-├── app-icon.svg                # 应用图标源文件（tauri icon 生成各尺寸）
+│   │   └── misc.ts             #   open_app · menu_bar · menu_click · done · desktop passthrough
+│   ├── api.ts / types.ts       # invoke wrappers & types
+├── app-icon.svg                # app icon source (tauri icon generates sizes)
 └── src-tauri/
-    ├── src/ax_core.rs          # AX 基础：权限 / 枚举 / 树遍历 / 属性读取 / perform action
-    ├── src/ax_act.rs           # computer-use 语义+合成操作：set_value / focus / 坐标点选 / CGEvent
-    ├── src/ax_open.rs          # 应用启动/聚焦（bundle id 优先，中文名别名）
-    ├── src/ocr.rs              # Apple Vision OCR（自绘 UI 文字识别）
-    ├── src/commands/           # Tauri 命令层（mod + permissions/apps/tree/screen/input/misc 六模块）
-    ├── src/rpc.rs              # JSON-RPC loopback 服务（127.0.0.1:8931）
-    └── src/lib.rs              # 命令注册
+    ├── src/ax_core.rs          # AX basics: permission / enumeration / tree walk / attribute read / perform action
+    ├── src/ax_act.rs           # computer-use semantic+synthetic ops: set_value / focus / coordinate pick / CGEvent
+    ├── src/ax_open.rs          # app launch/focus (bundle id first, Chinese-name aliases)
+    ├── src/ocr.rs              # Apple Vision OCR (self-drawn UI text recognition)
+    ├── src/commands/           # Tauri command layer (permissions/apps/tree/screen/input/misc)
+    ├── src/rpc.rs              # JSON-RPC loopback service (127.0.0.1:8931)
+    └── src/lib.rs              # command registration
 ```
 
-## Tauri 命令
+## Tauri commands
 
-| 命令 | 说明 |
+| Command | Description |
 | --- | --- |
-| `ax_permission_status` / `ax_request_permission` | 权限检测 / 触发系统弹窗 |
-| `ax_permission_diagnostics` | 进程链 + responsible process（开发模式授权对象） |
-| `ax_list_apps` | 枚举常规 GUI 应用 |
-| `ax_tree(pid, depth)` | 读取指定 pid 的 AX 树 |
-| `ax_perform_action(pid, path, action)` | 对元素执行 AX 动作 |
-| `ax_set_value(pid, path, text)` | 写元素 AXValue（语义输入；密码框拒绝） |
-| `ax_focus_element(pid, path)` | 元素抢焦点 |
-| `ax_set_position(pid, path, x, y)` | 移动元素/窗口 |
-| `ax_element_at(x, y)` | 屏幕坐标点选（system-wide） |
-| `ax_open_app(target)` | 按名启动/聚焦应用（bundle id 优先 + 中文名别名） |
-| `ax_type_keys(text, pid)` / `ax_key(combo, pid)` | 合成逐键输入 / 按键（密码框拒绝） |
-| `ax_click(x, y, pid)` / `ax_double_click` / `ax_right_click` | 合成鼠标点击（自绘 UI） |
-| `ax_scroll(x, y, lines, pid)` | 合成滚轮事件 |
-| `ax_menu_bar(pid)` / `ax_menu_click(pid, path)` | 菜单栏语义读取 / 点菜单项 |
-| `ocr_window(pid)` | Apple Vision OCR（返回屏幕坐标） |
-| `llm_chat(messages, tools)` | OpenAI 兼容对话补全（含 tool calling） |
-| `llm_get_config` / `llm_set_config` | LLM 配置读写（base_url / api_key / model） |
-| `llm_list_models(base, key)` | 拉取模型列表（设置页测试连接） |
+| `ax_permission_status` / `ax_request_permission` | permission check / system prompt |
+| `ax_permission_diagnostics` | process chain + responsible process (dev-mode authorization target) |
+| `ax_list_apps` | enumerate GUI apps |
+| `ax_tree(pid, depth)` | read the AX tree of a pid |
+| `ax_perform_action(pid, path, action)` | run an AX action on an element |
+| `ax_set_value(pid, path, text)` | write AXValue (semantic input; password fields refused) |
+| `ax_focus_element(pid, path)` | grab focus on an element |
+| `ax_set_position(pid, path, x, y)` | move an element/window |
+| `ax_element_at(x, y)` | resolve element at screen coordinate (system-wide) |
+| `ax_open_app(target)` | launch/focus app by name (bundle id first + Chinese aliases) |
+| `ax_type_keys(text, pid)` / `ax_key(combo, pid)` | synthesized keystrokes / keys (password fields refused) |
+| `ax_click(x, y, pid)` / `ax_double_click` / `ax_right_click` | synthesized mouse (self-drawn UI) |
+| `ax_scroll(x, y, lines, pid)` | synthesized wheel events |
+| `ax_menu_bar(pid)` / `ax_menu_click(pid, path)` | menu-bar semantic read / click |
+| `ocr_window(pid)` | Apple Vision OCR (returns screen coordinates) |
+| `llm_chat(messages, tools)` | OpenAI-compatible chat completion (incl. tool calling) |
+| `llm_get_config` / `llm_set_config` | LLM config read/write (base_url / api_key / model) |
+| `llm_list_models(base, key)` | fetch model list (settings connection test) |
 
-## 路线图
+## Roadmap
 
-见 [TODO.md](./TODO.md)：观察闭环（AXObserver / 截图对齐 / overlay）→
-CGEvent 合成输入（鼠标/键盘/滚动）→ Agent 接口层（observe/act JSON-RPC、
-动作校验与后验证、自动重定位）。LLM 智能模式已就绪（OpenAI 兼容，tool calling）。
+See [TODO.md](./TODO.md): observation loop (AXObserver / screenshot alignment /
+overlay) → CGEvent synthesized input (mouse / keyboard / scroll) → agent interface
+layer (observe/act JSON-RPC, action validation & post-verification, auto-relocation).
+LLM Smart Mode is ready (OpenAI-compatible, tool calling).
 
-## 注意
+## Notes
 
-- AX 属性读写是跨进程同步 IPC，`#[tauri::command(async)]` 已放到工作线程，不卡 UI。
-- `AXUIElement` 句柄不能跨 IPC 持久化：动作按「树转储时记录的子索引路径」定位；
-  UI 变化后路径可能失效 —— 动作命令支持 `relocate{role,label}` hint，路径失效时自动按
-  role+title 重搜树并重试一次（会话指令与 LLM 工具均已接入）。
+- AX attribute reads/writes are cross-process synchronous IPC; `#[tauri::command(async)]`
+  runs them on worker threads so the UI never blocks.
+- `AXUIElement` handles cannot persist across IPC: actions address elements by the
+  child-index path recorded at tree-dump time; paths can go stale after UI changes —
+  action commands support a `relocate{role,label}` hint to re-search the tree by
+  role+title and retry once (both chat commands and LLM tools use it).
 
-## 隐私与安全（2026-09 审查后补充）
+## Privacy & security (audited 2026-09)
 
-本工具能「看懂 + 操作」整个桌面，使用前请了解以下数据流向：
+This tool can "see and operate" your whole desktop. Know the data flows:
 
-- **屏幕内容外发**：智能模式下，当前应用的 AX 树、OCR 文字（即你屏幕上出现的文字）会被发送到 ⚙️ 配置的 LLM API（可自建/本地路由，如 tsm-hub）。涉及敏感页面（邮件、聊天、网银、验证码）时请注意：密码框（AXSecureTextField/AXPasswordField）在输入侧被拒绝自动操作，但若页面明文显示敏感内容，OCR 仍会读到。
-- **会话日志落盘**：智能模式会话结束会把完整转录（含用户指令、工具调用、OCR 文字）追加写入 `~/Library/Application Support/cn.erishen.ax-agent/logs/sessions.md`（owner-only 0600，日志目录 0700）。删除该文件即清除历史转录；转录不会发送给任何第三方（仅本地磁盘）。
-- **密钥与配置**：LLM API 密钥明文存 `…/llm.json`（0600，仅当前用户可读）；RPC 服务仅绑 127.0.0.1 且带 0600 token 鉴权；截图临时文件用完即删；`.env` / `apps.local.json` / `mcp.local.json` 均不入 git。
-- **无遥测**：代码不含任何统计/崩溃上报；唯一的外部网络连接是配置的 LLM API 与可选的本地 profile RAG（127.0.0.1:8001）。
-- **权限**：本应用请求 Accessibility（读 UI + 模拟输入）、Screen Recording（截图/OCR）、Input Monitoring（合成键盘）三项系统权限——授权后进程拥有整机控制能力，请仅在可信环境中运行，且不要把授权终端/进程交给不可信脚本。
+- **Screen content egress**: in Smart Mode, the AX tree and OCR text of the current
+  app (i.e. text on your screen) are sent to the ⚙️-configured LLM API (self-hosted /
+  local routing, e.g. tsm-hub). On sensitive pages (mail, chat, banking, 2FA codes):
+  password fields (AXSecureTextField/AXPasswordField) are refused for auto-input at
+  the input side, but if a page shows sensitive text in plain view, OCR will still
+  read it. A one-time privacy notice shows in the chat UI before Smart Mode is used.
+- **Session logs on disk**: a finished Smart-Mode session appends the full transcript
+  (user commands, tool calls, OCR text) to
+  `~/Library/Application Support/cn.erishen.ax-agent/logs/sessions.md`
+  (owner-only 0600, log dir 0700). Deleting the file removes the history; transcripts
+  never leave the local disk (no third party).
+- **Keys & config**: the LLM API key is stored in plaintext at `…/llm.json` (0600,
+  readable only by the current user; masked in the UI). `memory.json` (app-usage
+  habits) is also 0600. The RPC service binds 127.0.0.1 only and uses a 0600 bearer
+  token; screenshot temp files are deleted after use; `.env` / `apps.local.json` /
+  `mcp.local.json` are git-ignored.
+- **No telemetry**: no analytics or crash reporting anywhere. The only external
+  connections are the configured LLM API and the optional local profile RAG
+  (127.0.0.1:8001).
+- **Permissions**: this app requests Accessibility (read UI + simulate input),
+  Screen Recording (screenshot/OCR) and Input Monitoring (synthesized keyboard).
+  Once granted, the process can control the whole machine — run it only in a trusted
+  environment, and never hand the authorized terminal/process to an untrusted script.
+- **Git hygiene**: the commit history has been rewritten to remove personal profile
+  data and real file names; personal example tasks live only in the local
+  `apps.local.json`, never in the repository.
