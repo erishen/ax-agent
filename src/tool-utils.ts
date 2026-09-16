@@ -135,7 +135,10 @@ export type ParsedCommand =
  * splitting: "Google Chrome" must stay whole.
  */
 export function cutAppName(s: string): string {
-  return s.split(/[,，。;；、\n「」]/)[0].trim();
+  // App names never contain punctuation OR the common conjunction words used
+  // to chain the next instruction ("备忘录并全面审计…" → 备忘录). No space
+  // splitting: "Google Chrome" must stay whole.
+  return s.split(/[,，。;；、\n「」并和然后再]|\s+and\s+/i)[0].trim();
 }
 
 export function parseCommand(input: string): ParsedCommand | null {

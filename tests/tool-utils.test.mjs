@@ -289,6 +289,17 @@ test("cutAppName: slices app name at punctuation, keeps multi-word names", () =>
   assert.equal(cutAppName("备忘录"), "备忘录");
 });
 
+test("cutAppName: also cuts at conjunction words (template tasks)", () => {
+  // dynamic template tasks: "打开${app}并全面审计…" — no punctuation
+  assert.equal(cutAppName("备忘录并全面审计：数一数界面上有几类元素"), "备忘录");
+  assert.equal(cutAppName("TextEdit 和备忘录"), "TextEdit");
+  assert.equal(cutAppName("备忘录然后再打开 TextEdit"), "备忘录");
+  assert.equal(cutAppName("Messages and read the content"), "Messages");
+  // multi-word app names still survive
+  assert.equal(cutAppName("Google Chrome"), "Google Chrome");
+  assert.equal(cutAppName("系统设置，进入「显示器」设置页"), "系统设置");
+});
+
 test("extractAppNameFromLongArg: recovers app name from pasted task text", () => {
   const running = ["访达", "腾讯视频", "网易云音乐", "TextEdit"];
   // 17:21 failure case: whole task sentence pasted into app arg

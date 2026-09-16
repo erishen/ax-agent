@@ -32,6 +32,19 @@ export async function toolOpenApp(state: SessionState, args: Record<string, unkn
         result: `⚠️ open_app 的 app 参数过长（疑似粘贴了任务描述），已自动提取应用名「${hit}」并打开。下次请只传应用名。\n${inner.result}`,
       };
     }
+    // The target app is not running, so the running-app list can't match it.
+    // Hand the original arg to Rust — its recovery matches installed apps +
+    // the built-in /System/Applications table — and only surface the guard
+    // message if that also fails (nothing known in the text).
+    try {
+      const inner = await doOpenApp(state, target);
+      return {
+        ...inner,
+        result: `⚠️ open_app 的 app 参数过长，已按已安装应用库恢复打开。下次请只传应用名。\n${inner.result}`,
+      };
+    } catch {
+      /* fall through to the guard message */
+    }
     return { result: argGuard, state };
   }
   return doOpenApp(state, target);
