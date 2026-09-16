@@ -2,7 +2,7 @@
 
 **Computer use for macOS** — 让 agent 能「看懂 + 自由操作」任意正在运行的应用。
 以 **Rust + Tauri 2 + React + TypeScript** 构建，语义操作通道走 **macOS Accessibility
-API（AXUIElement）**，后续以 **CGEvent** 作为合成输入兜底（见 TODO.md 里程碑）。
+API（AXUIElement）**，CGEvent 合成输入（鼠标/键盘/滚轮）作兜底（见 TODO.md 里程碑）。
 
 不是快捷方式工具（对比 sprite），而是通用的界面观测 + 操控基座。
 
@@ -42,8 +42,23 @@ AX 命令（`ax_perform_action` / `ax_set_value` / `ax_focus_element`…）。
 **⚙️** 填 API 地址、密钥、模型，可一键测试连接。密钥保存在本机
 `app_data_dir/llm.json`，HTTP 请求从 Rust 端发出，不经过 webview。
 
-模型可用的工具：`list_apps` / `open_app` / `read_screen` / `find` / `click` /
-`type_text` / `focus` / `move_window` / `element_at` / `done`（最多 12 步）。
+模型可用的工具（34 个，见 `src/llm.ts` DESKTOP_TOOLS + 会话指令）：应用管理
+（`list_apps` / `open_app` / `frontmost_app`）、观察（`read_screen` / `ocr` / `find` /
+`element_at` / `screen_info` / `wait_for`）、语义操作（`click` / `type_text` / `focus` /
+`named_action` / `scroll_to` / `menu_bar` / `menu_click`）、合成输入（`click_at` /
+`double_click_at` / `right_click_at` / `drag` / `scroll` / `key` / `type_keys`）、
+窗口（`move_window` / `resize_window`）、桌面能力（`clipboard_*` / `notify` /
+`open_url` / `speak` / `profile_search` / `fs_scan` / `fs_move`）、本地 MCP
+（`mcp_local_*`）与收尾 `done`。步数上限 25 步，超限暂停后「继续」可携带完整
+上下文续跑（新额度）。
+
+### 安全机制
+
+- **危险操作确认**：元素命中删除/发送/退出登录等词时暂停，等用户批准才执行
+- **过期快照守卫**：坐标与合成输入类操作（click_at / drag / scroll / type_keys…）
+  在最近一次观察（ocr / read_screen / open_app）超过 60s 后被拒绝，提示先重新观察
+- **密码框保护**：焦点或目标元素为 AXSecureTextField / AXPasswordField 时拒绝自动
+  输入 —— 密码等敏感信息一律由用户本人输入
 
 **🔎 检查器（高级）** —— 原树形查看器：手动选应用、看属性表、逐元素操作，
 供调试和开发 agent 策略时用。
@@ -170,9 +185,11 @@ pnpm tauri build    # 产出 .app / .dmg（Dock 图标用 app-icon.svg 生成）
 ### 提交前检查
 
 - 完整验证：`make lint`（tsc + `clippy --all-targets -D warnings`）、`cargo test --lib`。
+- **开发纪律**：桌面开发只跑 `make dev`（tauri watch 自动重编译，Rust 改动以 watch
+  编译结果为准）；**不要并行跑 `cargo check` / `cargo build`** —— 与 watch 争用共享
+  `work/rust` target 会损坏宏缓存。watch 未在跑时再执行 `cargo test --no-default-features --lib`。
 - pre-commit hook（`.githooks/pre-commit`，已用 `git config core.hooksPath .githooks` 安装）：
   对暂存的 `.ts` 改动自动跑 `tsc --noEmit` 做快速门禁；Rust 改动**不**在此检查——
-  `make dev` 的 watch 编译与 `cargo check` 争用共享 `work/rust` target 会互相阻塞，
   Rust 请以 `make lint` / `cargo test` 为准。跳过门禁：`git commit --no-verify`。
 
 ### 权限（重要）
@@ -198,13 +215,19 @@ ax-agent/
 ├── index.html / src/           # React + TypeScript 前端
 │   ├── App.tsx                 # 权限门 / 会话↔检查器 Tab / 检查器视图
 │   ├── ChatView.tsx            # 💬 会话 UI（气泡、输入框）
-│   ├── chat.ts                 # 会话逻辑：指令解析 → AX 命令 → 回复
+│   ├── chat.ts                 # 会话逻辑：工具分发（runTool）→ 34 个独立工具函数
+│   ├── llm.ts                  # LLM 工具 schema（DESKTOP_TOOLS）+ 对话补全
+│   ├── agent-config.ts         # 系统提示词 / 危险词 / 示例
 │   ├── api.ts / types.ts       # invoke 封装与类型
+│   ├── tencent-ui.ts / netease-ui.ts  # 腾讯视频 / 网易云音乐自绘 UI 决策状态机
 ├── app-icon.svg                # 应用图标源文件（tauri icon 生成各尺寸）
 └── src-tauri/
-    ├── src/ax_core.rs          # AX 基础：权限 / 枚举 / 树遍历 / perform action
-    ├── src/ax_act.rs           # computer-use 语义操作：set_value / focus / position / 坐标点选
-    ├── src/commands.rs         # Tauri 命令层（含 sysinfo 权限诊断）
+    ├── src/ax_core.rs          # AX 基础：权限 / 枚举 / 树遍历 / 属性读取 / perform action
+    ├── src/ax_act.rs           # computer-use 语义+合成操作：set_value / focus / 坐标点选 / CGEvent
+    ├── src/ax_open.rs          # 应用启动/聚焦（bundle id 优先，中文名别名）
+    ├── src/ocr.rs              # Apple Vision OCR（自绘 UI 文字识别）
+    ├── src/commands/           # Tauri 命令层（mod + permissions/apps/tree/screen/input/misc 六模块）
+    ├── src/rpc.rs              # JSON-RPC loopback 服务（127.0.0.1:8931）
     └── src/lib.rs              # 命令注册
 ```
 
@@ -217,11 +240,16 @@ ax-agent/
 | `ax_list_apps` | 枚举常规 GUI 应用 |
 | `ax_tree(pid, depth)` | 读取指定 pid 的 AX 树 |
 | `ax_perform_action(pid, path, action)` | 对元素执行 AX 动作 |
-| `ax_set_value(pid, path, text)` | 写元素 AXValue（语义输入） |
+| `ax_set_value(pid, path, text)` | 写元素 AXValue（语义输入；密码框拒绝） |
 | `ax_focus_element(pid, path)` | 元素抢焦点 |
 | `ax_set_position(pid, path, x, y)` | 移动元素/窗口 |
 | `ax_element_at(x, y)` | 屏幕坐标点选（system-wide） |
-| `ax_open_app(target)` | 按名启动/聚焦应用（会话用） |
+| `ax_open_app(target)` | 按名启动/聚焦应用（bundle id 优先 + 中文名别名） |
+| `ax_type_keys(text, pid)` / `ax_key(combo, pid)` | 合成逐键输入 / 按键（密码框拒绝） |
+| `ax_click(x, y, pid)` / `ax_double_click` / `ax_right_click` | 合成鼠标点击（自绘 UI） |
+| `ax_scroll(x, y, lines, pid)` | 合成滚轮事件 |
+| `ax_menu_bar(pid)` / `ax_menu_click(pid, path)` | 菜单栏语义读取 / 点菜单项 |
+| `ocr_window(pid)` | Apple Vision OCR（返回屏幕坐标） |
 | `llm_chat(messages, tools)` | OpenAI 兼容对话补全（含 tool calling） |
 | `llm_get_config` / `llm_set_config` | LLM 配置读写（base_url / api_key / model） |
 | `llm_list_models(base, key)` | 拉取模型列表（设置页测试连接） |
