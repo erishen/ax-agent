@@ -145,10 +145,17 @@ const CONSUMER_ALIASES: &[(&str, &str)] = &[
 ];
 
 /// Map a Chinese marketing name to the canonical bundle name.
+///
+/// Strict match only: `needle` arrives trimmed + lowercased from
+/// `open_application`. A prefix match (`needle.starts_with(zh)`) used to let a
+/// long task sentence like "网易云音乐。网易云音乐是自绘 UI..." slip through
+/// and open the app — silently hiding a wrong tool-call argument from the
+/// agent. Fail loudly instead so the agent sees "找不到应用" and retries with a
+/// clean name.
 fn alias_bundle(needle: &str) -> Option<String> {
     CONSUMER_ALIASES
         .iter()
-        .find(|(zh, _)| zh.eq_ignore_ascii_case(needle) || needle.starts_with(zh))
+        .find(|(zh, _)| needle == *zh)
         .map(|(_, bundle)| bundle.to_string())
 }
 
@@ -278,8 +285,9 @@ mod tests {
         assert_eq!(alias_bundle("腾讯视频").as_deref(), Some("qqlive"));
         assert_eq!(alias_bundle("网易云音乐").as_deref(), Some("neteasemusic"));
         assert_eq!(alias_bundle("网易云").as_deref(), Some("neteasemusic"));
-        // prefix form: a phrase starting with the marketing name also resolves
-        assert_eq!(alias_bundle("网易云音乐").as_deref(), Some("neteasemusic"));
+        // exact match only: a long task sentence must NOT resolve (it would hide
+        // a wrong open_app argument from the agent)
+        assert_eq!(alias_bundle("网易云音乐。网易云音乐是自绘 UI..."), None);
         // unknown phrases resolve to nothing (caller falls back to open -a)
         assert_eq!(alias_bundle("微信"), None);
         assert_eq!(alias_bundle(""), None);

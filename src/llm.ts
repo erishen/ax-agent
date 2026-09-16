@@ -239,8 +239,11 @@ export const AGENT_TOOLS: Array<{ name: string; description: string; parameters:
   },
   {
     name: "open_app",
-    description: "启动或聚焦一个应用（按名称，如 TextEdit / 备忘录 / Safari）。成功后自动返回该应用的界面大纲。",
-    parameters: obj({ app: { type: "string", description: "应用名称" } }, ["app"]),
+    description: "启动或聚焦一个应用。app 参数只填应用名称本身（如 TextEdit / 备忘录 / 网易云音乐），禁止传入任务描述、句子或任何其他文字——传长文本会匹配失败。成功后自动返回该应用的界面大纲。",
+    parameters: obj(
+      { app: { type: "string", description: "应用名称（仅名称本身，如 TextEdit / 网易云音乐；不要粘贴任务描述）" } },
+      ["app"],
+    ),
   },
   {
     name: "read_screen",

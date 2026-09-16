@@ -546,8 +546,13 @@ async function toolOpenApp(state: SessionState, args: Record<string, unknown>): 
         // screen the target does NOT occupy (the runAgent start may not have
         // known the pid yet when the app was already running).
         void hideAside(app.pid);
+        const outlineText = renderOutline(outline);
         return {
-          result: `已打开 ${app.name} (pid ${app.pid})。界面元素：\n${renderOutline(outline) || "（未发现常规元素）"}`,
+          result:
+            `已打开 ${app.name} (pid ${app.pid})。界面元素：\n${outlineText || "（未发现常规元素）"}` +
+            (outlineText
+              ? ""
+              : "\n提示：未读到 AX 元素，该应用可能是自绘 UI（如网易云音乐/腾讯视频）。请继续用 ocr 读取屏幕文字，不要在此停步。"),
           state,
         };
 }

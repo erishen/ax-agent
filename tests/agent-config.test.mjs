@@ -83,7 +83,7 @@ test("DANGER_WORDS covers the confirmation vocabulary", () => {
 });
 
 test("policy constants are present and sane", () => {
-  assert.match(SYSTEM_PROMPT, /AX Explorer/);
+  assert.match(SYSTEM_PROMPT, /AX Agent/);
   assert.match(SYSTEM_PROMPT, /步数是稀缺资源/);
   assert.match(SYSTEM_PROMPT, /画像锚点/);
   assert.equal(MAX_AGENT_STEPS, 25);
