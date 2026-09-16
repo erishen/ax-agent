@@ -21,7 +21,7 @@
 - [x] `examples/probe_at.rs`：屏幕坐标点选示例
 - [x] 更多示例：keyboard / mouse / menu / wechat_stress（见 README「完整示例」）
 - [x] 更多 App 示例：Finder（选文件/打开）、Calendar（建日程）、System Settings（切开关）— 可选增强（只读版示例已交付：访达最近文件/日历今日日程/系统设置显示器信息）
-- [ ] 示例参数化：目标 App / 文本从命令行传入 — 可选增强
+- [x] 示例参数化：目标 App / 文本从命令行传入 — 可选增强（textedit_demo 支持 bundle_id/文本/窗口坐标 CLI 参数）
 
 ## 里程碑 1.7 — 会话式操作界面（已完成 ✅，持续打磨）
 

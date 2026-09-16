@@ -16,7 +16,12 @@
 //!
 //! ```text
 //! cargo run --example textedit_demo
+//! cargo run --example textedit_demo -- com.apple.TextEdit "自定义文本" 200 200
 //! ```
+//!
+//! Optional CLI args (all positional, defaults in parens):
+//! `<bundle_id>` (com.apple.TextEdit) — target app; `<text>` (内置演示文本) —
+//! text to write; `<x> <y>` (120 120) — window position.
 //!
 //! Permissions: launch from a Terminal that is ticked in
 //! System Settings → Privacy & Security → Accessibility.
@@ -64,14 +69,23 @@ fn main() {
         std::process::exit(2);
     }
 
-    // 1. Find (or launch) TextEdit.
+    // CLI args (TODO ④c — 示例参数化): bundle_id / text / x y, all optional.
+    let mut args = std::env::args().skip(1);
+    let bundle = args.next().unwrap_or_else(|| "com.apple.TextEdit".to_string());
+    let demo_text = args
+        .next()
+        .unwrap_or_else(|| "Hello from AX Agent!\n这一行是用 AXUIElementSetAttributeValue 写入的。\n".to_string());
+    let win_x: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(120.0);
+    let win_y: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(120.0);
+
+    // 1. Find (or launch) the target app.
     let apps = ax_core::list_applications();
-    let textedit = apps.iter().find(|a| a.bundle_id == "com.apple.TextEdit");
-    let Some(app) = textedit else {
-        eprintln!("✗ TextEdit 未运行。请先打开 TextEdit（open -a TextEdit）再运行本示例。");
+    let found = apps.iter().find(|a| a.bundle_id == bundle);
+    let Some(app) = found else {
+        eprintln!("✗ {bundle} 未运行。请先打开它（open -a）再运行本示例。");
         std::process::exit(1);
     };
-    println!("① 找到 TextEdit: pid {} ({})", app.pid, app.name);
+    println!("① 找到 {bundle}: pid {} ({})", app.pid, app.name);
 
     // 2. Dump its AX tree and locate the main text area (AXTextArea).
     let tree = ax_core::build_tree_for_pid(app.pid, 12).expect("读取 AX 树失败");
@@ -104,16 +118,15 @@ fn main() {
     println!("③ 已聚焦文本区域 (AXFocused = true)");
 
     // 4. 写入 — replace the text content via AXValue.
-    let demo_text = "Hello from AX Agent!\n这一行是用 AXUIElementSetAttributeValue 写入的。\n";
-    ax_act::set_value_for_path(app.pid, &path, demo_text).expect("写入 AXValue 失败");
+    ax_act::set_value_for_path(app.pid, &path, &demo_text).expect("写入 AXValue 失败");
     println!("④ 已写入 {} 字节文本 (AXValue)", demo_text.len());
 
     // 5. Move the window (AXPosition on the AXWindow node).
     let window = find(&tree, &|n: &ax_core::AxNode| n.role == "AXWindow");
     if let Some(win) = window {
         if let Some(wpath) = path_of(&tree, win) {
-            match ax_act::set_position_for_path(app.pid, &wpath, 120.0, 120.0) {
-                Ok(()) => println!("⑤ 已把 TextEdit 窗口移到 (120, 120)"),
+            match ax_act::set_position_for_path(app.pid, &wpath, win_x, win_y) {
+                Ok(()) => println!("⑤ 已把窗口移到 ({win_x}, {win_y})"),
                 Err(e) => println!("⑤ 窗口移动失败（部分窗口不支持 AXPosition）: {e}"),
             }
         }
@@ -125,5 +138,5 @@ fn main() {
         println!("⑥ 验证: {}", summarize(area2));
     }
 
-    println!("完成 ✓ — 切到 TextEdit 看看，文字已经在里面了。");
+    println!("完成 ✓ — 切到目标应用看看，文字已经在里面了。");
 }
