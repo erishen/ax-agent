@@ -31,9 +31,10 @@ test("classifyFile: resume / job-search name patterns", () => {
   assert.equal(classifyFile("简历2026.pdf").folder, "求职");
   assert.equal(classifyFile("resume_2026.docx").folder, "求职");
   assert.equal(classifyFile("offer-letter.pdf").folder, "求职");
-  // A résumé whose filename has no resume keyword (e.g. "个人简历-final") falls back to 文档 by extension — the LLM sees the
-  // scanned names and reclassifies such files semantically in its plan.
-  assert.equal(classifyFile("个人简历-final").folder, "文档");
+  // A résumé whose filename has no resume keyword (e.g. "李华-项目总结.pdf")
+  // falls back to 文档 by extension — the LLM sees the scanned names and
+  // reclassifies such files semantically in its plan.
+  assert.equal(classifyFile("李华-项目总结.pdf").folder, "文档");
 });
 
 test("classifyFile: unknown types and folders return null (LLM decides)", () => {
