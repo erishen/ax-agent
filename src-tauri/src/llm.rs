@@ -155,7 +155,14 @@ pub async fn llm_set_config(app: tauri::AppHandle, mut config: LlmConfig) -> Res
         }
     }
     let json = serde_json::to_string_pretty(&config).map_err(|e| format!("序列化配置失败: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("写入配置失败: {e}"))
+    std::fs::write(&path, json).map_err(|e| format!("写入配置失败: {e}"))?;
+    // llm.json holds the plaintext API key — keep it owner-only (was 0644).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 /// One message in the OpenAI chat format (role/content/tool_calls/tool_call_id).

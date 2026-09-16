@@ -82,12 +82,25 @@ fn append_session_log(app: tauri::AppHandle, text: String) -> Result<String, Str
         .map_err(|e| format!("获取数据目录失败: {e}"))?
         .join("logs");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建日志目录失败: {e}"))?;
+    // The transcript contains whatever was on screen (OCR words, AX trees):
+    // lock the log dir + file to this user so other local accounts can't
+    // read it (was 0755/0644).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
     let file = dir.join("sessions.md");
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&file)
         .map_err(|e| format!("打开日志失败: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600));
+    }
     let ts = utc_now();
     writeln!(f, "\n===== {ts} =====").map_err(|e| format!("写入日志失败: {e}"))?;
     writeln!(f, "{text}").map_err(|e| format!("写入日志失败: {e}"))?;

@@ -272,3 +272,13 @@ CGEvent 合成输入（鼠标/键盘/滚动）→ Agent 接口层（observe/act 
 - `AXUIElement` 句柄不能跨 IPC 持久化：动作按「树转储时记录的子索引路径」定位；
   UI 变化后路径可能失效 —— 动作命令支持 `relocate{role,label}` hint，路径失效时自动按
   role+title 重搜树并重试一次（会话指令与 LLM 工具均已接入）。
+
+## 隐私与安全（2026-09 审查后补充）
+
+本工具能「看懂 + 操作」整个桌面，使用前请了解以下数据流向：
+
+- **屏幕内容外发**：智能模式下，当前应用的 AX 树、OCR 文字（即你屏幕上出现的文字）会被发送到 ⚙️ 配置的 LLM API（可自建/本地路由，如 tsm-hub）。涉及敏感页面（邮件、聊天、网银、验证码）时请注意：密码框（AXSecureTextField/AXPasswordField）在输入侧被拒绝自动操作，但若页面明文显示敏感内容，OCR 仍会读到。
+- **会话日志落盘**：智能模式会话结束会把完整转录（含用户指令、工具调用、OCR 文字）追加写入 `~/Library/Application Support/cn.erishen.ax-agent/logs/sessions.md`（owner-only 0600，日志目录 0700）。删除该文件即清除历史转录；转录不会发送给任何第三方（仅本地磁盘）。
+- **密钥与配置**：LLM API 密钥明文存 `…/llm.json`（0600，仅当前用户可读）；RPC 服务仅绑 127.0.0.1 且带 0600 token 鉴权；截图临时文件用完即删；`.env` / `apps.local.json` / `mcp.local.json` 均不入 git。
+- **无遥测**：代码不含任何统计/崩溃上报；唯一的外部网络连接是配置的 LLM API 与可选的本地 profile RAG（127.0.0.1:8001）。
+- **权限**：本应用请求 Accessibility（读 UI + 模拟输入）、Screen Recording（截图/OCR）、Input Monitoring（合成键盘）三项系统权限——授权后进程拥有整机控制能力，请仅在可信环境中运行，且不要把授权终端/进程交给不可信脚本。
