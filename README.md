@@ -34,6 +34,18 @@ The session keeps a "current app + UI outline"; keywords resolve to concrete
 elements, then the matching AX command runs
 (`ax_perform_action` / `ax_set_value` / `ax_focus_element` …).
 
+**Why offline?** Chat commands run entirely on your machine — no LLM, no network,
+no API key. Nothing leaves the process: no AX tree, OCR text or session content
+is ever sent anywhere. Perfect for quick single-step actions, and fully usable
+before you configure an API.
+
+**How it works:** each command is parsed locally (`parseCommand`) and executed
+against the session state. There is no model in the loop.
+
+**Limit:** one command per message. When your message carries follow-up steps
+(e.g. "open Calendar, then show today's schedule"), the assistant tells you to
+switch to Smart Mode — multi-step tasks need a model.
+
 **🤖 Smart Mode (LLM agent)** — toggle on the left of the input box. The model
 plans and executes multi-step operations automatically:
 
