@@ -127,6 +127,17 @@ export type ParsedCommand =
   | { kind: "find"; keyword: string };
 
 /** Parse a raw user line into the offline command it maps to, or null. */
+/**
+ * Cut a parsed "打开 X" target down to the app name itself. The quick-command
+ * parser is a regex, so "打开访达，read_screen 浏览…" would otherwise take the
+ * WHOLE sentence as the app name and fail (17:21/17:40/18:01 sessions). Cut at
+ * the first punctuation boundary — app names never contain one. No space
+ * splitting: "Google Chrome" must stay whole.
+ */
+export function cutAppName(s: string): string {
+  return s.split(/[,，。;；、\n「」]/)[0].trim();
+}
+
 export function parseCommand(input: string): ParsedCommand | null {
   const lower = input.trim().toLowerCase();
   const num = (s: string | undefined) =>
@@ -134,7 +145,7 @@ export function parseCommand(input: string): ParsedCommand | null {
   if (/^(帮助|help|用法|能做什么|指令)[?？]?$/i.test(lower)) return { kind: "help" };
   if (/^(继续|接着做|接着来|continue|go on|resume)[?？]?$/i.test(lower)) return { kind: "continue" };
   const open = input.match(/^(?:打开|启动|open|launch)\s*(.+)$/i);
-  if (open) return { kind: "open", target: open[1].trim() };
+  if (open) return { kind: "open", target: cutAppName(open[1].trim()) };
   if (/^(应用列表|应用|apps|list apps)$/i.test(lower)) return { kind: "apps" };
   const read = input.match(/^(?:读一下|读取|刷新读|读|read|inspect)\s*(.*)$/i);
   if (read) return { kind: "read", app: read[1].trim() };

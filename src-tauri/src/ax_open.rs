@@ -10,6 +10,51 @@ use objc2_app_kit::{
 
 use crate::ax_core::AxAppInfo;
 
+/// Best-effort recovery when a caller pastes a whole task sentence as the
+/// app name: find the earliest known app name (installed apps + consumer
+/// aliases) inside the text, longest name first ("网易云音乐" wins over
+/// "音乐"). Returns None when nothing known is mentioned — callers should
+/// then surface the guard message instead of guessing.
+fn recover_app_from_text(text: &str) -> Option<String> {
+    let apps = crate::ax_core::list_installed_apps().ok()?;
+    let mut candidates: Vec<(String, usize)> = Vec::new(); // (name, char len)
+    for a in &apps {
+        let n = a.name.to_lowercase();
+        let nl = n.chars().count();
+        if nl >= 2 {
+            candidates.push((n.clone(), nl));
+        }
+        let bn = a.bundle_name.to_lowercase();
+        let bl = bn.chars().count();
+        if bl >= 2 && bn != n {
+            candidates.push((bn, bl));
+        }
+    }
+    for (zh, _) in CONSUMER_ALIASES {
+        if zh.chars().count() >= 2 {
+            candidates.push((zh.to_string(), zh.chars().count()));
+        }
+    }
+    // /System/Applications is NOT scanned by list_installed_apps (Finder,
+    // System Settings, Terminal, Notes… live there), so add the common
+    // built-in app names explicitly — recovery must work for them too.
+    for name in SYSTEM_APP_NAMES {
+        if name.chars().count() >= 2 {
+            candidates.push((name.to_string(), name.chars().count()));
+        }
+    }
+    candidates.sort_by_key(|(_, l)| std::cmp::Reverse(*l));
+    let mut best: Option<(usize, String)> = None;
+    for (name, _) in candidates {
+        if let Some(idx) = text.find(&name) {
+            if best.as_ref().is_none_or(|(bi, _)| idx < *bi) {
+                best = Some((idx, name.clone()));
+            }
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
 /// Launch or focus the app matching `target` (localized name or bundle id,
 /// case-insensitive). Returns the resolved app info (with a fresh pid).
 ///
@@ -21,10 +66,16 @@ pub fn open_application(target: &str) -> Result<AxAppInfo, String> {
         return Err("应用名为空".to_string());
     }
     // App names are short; a long argument means the caller pasted the whole
-    // task sentence in. Fail with guidance (defense in depth — the TS tool
-    // layer already guards, but RPC/other callers bypass it).
+    // task sentence in (17:21/17:40/18:01 sessions, "打开访达，read_screen
+    // 浏览…"). First try to recover: if an installed app's name appears in
+    // the text, open that instead of failing. This covers apps that are NOT
+    // running (系统设置), which the TS-side running-app recovery misses.
+    // Only when nothing known appears do we fail with guidance.
     let len = needle.chars().count();
     if len > 24 {
+        if let Some(hit) = recover_app_from_text(&needle) {
+            return open_application(&hit);
+        }
         return Err(format!(
             "app 参数疑似包含任务描述（{len} 字符，应 ≤24）：只填应用名称（如「网易云音乐」「TextEdit」），不要粘贴任务说明"
         ));
@@ -140,6 +191,28 @@ fn name_matches(a: &crate::ax_core::InstalledApp, needle: &str) -> bool {
         || a.bundle_name.to_lowercase() == needle
         || a.bundle_id.to_lowercase() == needle
 }
+
+/// Common built-in macOS app names (zh + en) for recovery of pasted task
+/// sentences. These live in /System/Applications, outside the installed-apps
+/// scan, but `open -a <name>` still resolves them via LaunchServices.
+const SYSTEM_APP_NAMES: &[&str] = &[
+    "系统设置", "system settings",
+    "访达", "finder",
+    "备忘录", "notes",
+    "终端", "terminal",
+    "文本编辑", "textedit",
+    "计算器", "calculator",
+    "预览", "preview",
+    "音乐", "music",
+    "邮件", "mail",
+    "日历", "calendar",
+    "提醒事项", "reminders",
+    "照片", "photos",
+    "地图", "maps",
+    "信息", "messages",
+    "safari", "safari浏览器",
+    "便笺", "stickies",
+];
 
 /// Marketing-name aliases for apps whose macOS name/bundle differs from what
 /// users call them (Tencent Video ships as QQLive.app; NetEase CloudMusic
@@ -303,10 +376,37 @@ mod tests {
     }
 
     #[test]
-    fn long_app_arguments_are_rejected_before_any_launch() {
+    fn long_app_arguments_with_known_app_recover_instead_of_failing() {
+        // 18:01 session: whole task sentence pasted — an installed app name
+        // (网易云音乐, via consumer alias) appears inside, so we recover by
+        // opening that app instead of rejecting.
         let long = "网易云音乐。网易云音乐是自绘 UI（AX 树基本为空），全程以 ocr + click_at 为主";
+        let ok = open_application(long).expect("should recover and launch");
+        assert_eq!(ok.name, "网易云音乐", "unexpected app: {}", ok.name);
+    }
+
+    #[test]
+    fn long_app_arguments_without_known_app_are_rejected() {
+        // No known app name in the text → guard message, no launch.
+        let long = "随便打开一个什么神秘的应用看看效果如何再决定下一步计划";
         let err = open_application(long).unwrap_err();
         assert!(err.contains("疑似包含任务描述"), "unexpected error: {err}");
         assert!(err.contains("只填应用名称"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn recover_app_from_text_prefers_earliest_longest_match() {
+        // "系统设置" (not running) resolves from the sentence start.
+        assert_eq!(
+            recover_app_from_text("系统设置，进入「显示器」设置页，用 ocr 或 read_screen 读取当前显示器信息"),
+            Some("系统设置".to_string())
+        );
+        // Multiple mentions: earliest wins.
+        assert_eq!(
+            recover_app_from_text("打开访达，再打开文本编辑").map(|s| s == "访达" || s == "textedit"),
+            Some(true)
+        );
+        // Nothing known → None (never guess).
+        assert_eq!(recover_app_from_text("随便开个什么东西看看效果如何"), None);
     }
 }

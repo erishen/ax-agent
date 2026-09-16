@@ -230,6 +230,7 @@ test("parseCommand: read does not swallow refresh (checked after read)", () => {
 import {
   argsText,
   asText,
+  cutAppName,
   extractAppNameFromLongArg,
   friendlyLlmError,
   stepHeading,
@@ -275,6 +276,17 @@ test("friendlyLlmError: 404 and timeout", () => {
 
 test("friendlyLlmError: unknown error passes through", () => {
   assert.equal(friendlyLlmError("weird failure"), "❌ LLM 调用失败：weird failure");
+});
+
+test("cutAppName: slices app name at punctuation, keeps multi-word names", () => {
+  // 18:01 sessions: comma/period after the app name
+  assert.equal(cutAppName("访达，read_screen 浏览当前窗口内容（最近使用/文稿等）"), "访达");
+  assert.equal(cutAppName("系统设置，进入「显示器」设置页，用 ocr 或 read_screen 读取当前显示器信息"), "系统设置");
+  assert.equal(cutAppName("网易云音乐。网易云音乐是自绘 UI（AX 树基本为空）"), "网易云音乐");
+  // no punctuation -> whole target stays (multi-word apps must survive)
+  assert.equal(cutAppName("Google Chrome"), "Google Chrome");
+  assert.equal(cutAppName("TextEdit"), "TextEdit");
+  assert.equal(cutAppName("备忘录"), "备忘录");
 });
 
 test("extractAppNameFromLongArg: recovers app name from pasted task text", () => {
