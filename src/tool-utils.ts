@@ -186,8 +186,11 @@ export function friendlyLlmError(errText: string): string {
   if (t.includes("404")) {
     return "❓ 接口地址或模型名不对（404）。请检查 ⚙️ 里的 API 地址（应含 /v1 或由应用自动补全）与模型名。";
   }
+  if (t.includes("网络错误") && t.includes("已退避重试")) {
+    return "⏱ 模型服务网络错误（超时/连接异常），已自动重试多轮仍失败：\n· 等 1–2 分钟再发一次\n· 或在 ⚙️ 里换一个模型/服务商\n· 持续出现时检查本地中转 / 代理状态";
+  }
   if (t.includes("timeout") || t.includes("timed out")) {
-    return "⏱ 请求超时。模型服务响应太慢，请稍后重试或换个模型。";
+    return "⏱ 请求超时。模型服务响应太慢，已自动重试仍失败，请稍后重试或换个模型。";
   }
   return `❌ LLM 调用失败：${errText}`;
 }

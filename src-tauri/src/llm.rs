@@ -280,8 +280,9 @@ async fn send_with_retry(
     pace_gate().await;
     let mut last_text = String::new();
     let mut last_status = reqwest::StatusCode::OK;
+    let mut last_net_err: Option<String> = None;
     for attempt in 1..=RETRY_ATTEMPTS {
-        let resp = CLIENT
+        let resp = match CLIENT
             .post(url)
             .header("Authorization", format!("Bearer {key}"))
             .header("Content-Type", "application/json")
@@ -289,7 +290,31 @@ async fn send_with_retry(
             .timeout(Duration::from_secs(timeout_secs))
             .send()
             .await
-            .map_err(|e| format!("请求 LLM 失败: {e}"))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Network-layer failures: timeouts (slow first prefill, provider
+                // queue) and connection-level errors are often transient and
+                // recover on retry — treat them like 5xx with backoff. Hard
+                // errors (DNS failure, Connection refused = service not running
+                // or wrong URL) mean retrying is pointless; fail fast so the
+                // user sees the real problem immediately (16:40 session died on
+                // a timeout that was never retried).
+                let refused = e.to_string().contains("Connection refused");
+                if !e.is_timeout() && !(e.is_connect() && !refused) {
+                    return Err(format!("请求 LLM 失败: {e}"));
+                }
+                let msg = format!("请求 LLM 失败: {e}");
+                last_net_err = Some(msg.clone());
+                let secs = (2.0_f64.powi(attempt as i32)).min(10.0) + rand_jitter();
+                eprintln!(
+                    "[llm] 网络错误（第 {attempt}/{RETRY_ATTEMPTS} 次重试前退避 {secs:.1}s）{}",
+                    msg.chars().take(120).collect::<String>()
+                );
+                tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+                continue;
+            }
+        };
         let status = resp.status();
         last_status = status;
         if status.is_success() {
@@ -339,6 +364,12 @@ async fn send_with_retry(
             text.chars().take(120).collect::<String>()
         );
         tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+    }
+    if let Some(net_err) = last_net_err {
+        return Err(format!(
+            "LLM 网络错误：已退避重试 {RETRY_ATTEMPTS} 次仍失败。原始错误: {}",
+            truncate(&net_err, 300)
+        ));
     }
     let code = last_status.as_u16();
     if code == 429 || code == 502 {

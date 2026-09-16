@@ -260,6 +260,13 @@ test("friendlyLlmError: auth failures", () => {
   assert.match(friendlyLlmError("403 Forbidden"), /检查密钥与模型名/);
 });
 
+test("friendlyLlmError: network error after backoff retries", () => {
+  const out = friendlyLlmError("LLM 网络错误：已退避重试 5 次仍失败。原始错误: 请求 LLM 失败: ...timeout...");
+  assert.match(out, /网络错误/);
+  assert.match(out, /已自动重试/);
+  assert.match(out, /换一个模型/);
+});
+
 test("friendlyLlmError: 404 and timeout", () => {
   assert.match(friendlyLlmError("404 model not found"), /接口地址或模型名不对/);
   assert.match(friendlyLlmError("request timed out"), /请求超时/);
