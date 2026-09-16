@@ -11,6 +11,7 @@ import {
   type SessionState,
 } from "./chat";
 import { exampleBatch, type ExampleTask } from "./examples";
+import { desktopToolExec } from "./api";
 import {
   llmConfigured,
   llmListModels,
@@ -268,7 +269,6 @@ export default function ChatView() {
         await navigator.clipboard.writeText(text);
       } catch {
         // Webview clipboard blocked → native clipboard tool.
-        const { desktopToolExec } = await import("./api");
         await desktopToolExec("clipboard_set", { text });
       }
       setCopied(true);

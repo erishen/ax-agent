@@ -37,4 +37,22 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // Split third-party vendor (react / markdown renderers) into its own
+  // chunk so the app bundle stays under Vite's 500 kB warning and the
+  // vendor chunk is cache-stable across app-only releases.
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: [
+            "react",
+            "react-dom",
+            "react-markdown",
+            "remark-gfm",
+          ],
+        },
+      },
+    },
+  },
 }));
