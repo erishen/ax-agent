@@ -98,6 +98,24 @@ fn append_session_log(app: tauri::AppHandle, text: String) -> Result<String, Str
         if meta.len() > MAX_LOG_BYTES {
             let archived = dir.join(format!("sessions-{}.md", utc_now().replace(':', "-")));
             let _ = std::fs::rename(&file, &archived);
+            // Archives are never rotated again once renamed; cap the count so
+            // long-lived installs don't accumulate sessions-*.md forever.
+            const MAX_ARCHIVES: usize = 5;
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                let mut archives: Vec<_> = rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.starts_with("sessions-"))
+                    })
+                    .collect();
+                archives.sort();
+                for old in archives.iter().take(archives.len().saturating_sub(MAX_ARCHIVES)) {
+                    let _ = std::fs::remove_file(old);
+                }
+            }
         }
     }
     let mut f = std::fs::OpenOptions::new()

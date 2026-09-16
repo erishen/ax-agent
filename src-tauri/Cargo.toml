@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.35"
 # LLM bridge (OpenAI-compatible chat completions).
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = { version = "0.3", default-features = false }
 # .env loading for LLM config (AX_EXPLORER_LLM_* variables).
 dotenvy = "0.15"

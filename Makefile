@@ -33,20 +33,20 @@ fe-build: ## 仅构建前端产物（tsc + vite → dist/）
 typecheck: ## TypeScript 类型检查
 	pnpm exec tsc --noEmit
 
-check: ## Rust 编译检查（workspace 共享 target，需先 fe-build 嵌入资源）
-	cd src-tauri && cargo check
+check: ## Rust 编译检查（仅 ax-agent，避免整 workspace 触发无关大数据依赖重建；需先 fe-build 嵌入资源）
+	cd src-tauri && cargo check -p ax-agent
 
 fmt: ## 格式化 Rust 代码
 	cd src-tauri && cargo fmt
 
-clippy: ## Rust clippy 静态检查（RUSTC_WRAPPER= 绕过 sccache，本机 sccache 调 clippy-driver 会挂）
-	cd src-tauri && RUSTC_WRAPPER= cargo clippy --all-targets -- -D warnings
+clippy: ## Rust clippy 静态检查（仅 ax-agent，避免整 workspace；RUSTC_WRAPPER= 绕过 sccache）
+	cd src-tauri && RUSTC_WRAPPER= cargo clippy -p ax-agent --all-targets -- -D warnings
 
 lint: ## 代码检查（TypeScript 类型 + Rust clippy）
 	@echo "=== TypeScript 类型检查 ==="
 	pnpm exec tsc --noEmit
 	@echo "=== Rust clippy ==="
-	cd src-tauri && RUSTC_WRAPPER= cargo clippy --all-targets -- -D warnings
+	cd src-tauri && RUSTC_WRAPPER= cargo clippy -p ax-agent --all-targets -- -D warnings
 
 clean-macros: ## 删除共享 target 中宏库 .dylib（解决 mismatched ABI，cargo 会自动重编）
 	@echo "删除共享 target 中所有宏库 .dylib 文件..."
