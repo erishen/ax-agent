@@ -58,7 +58,10 @@ You: 帮我在备忘录记一下明天买牛奶
 
 Works with any OpenAI-compatible API (DeepSeek / Qwen / Ollama / LM Studio…):
 click **⚙️** on the right of the input box to set the API URL, key and model,
-with a one-click connection test. The key is stored locally in
+with a one-click connection test; two optional settings — `max_tokens`
+(per-reply token cap, default 2048) and the tool-result truncation threshold
+(default 2000 chars) — keep long outputs / big tool results from blowing up
+the context. The key is stored locally in
 `app_data_dir/llm.json`; HTTP requests are issued from the Rust side, never the webview.
 
 Tools available to the model (**34**, see `DESKTOP_TOOLS` in `src/llm.ts` plus chat
@@ -69,7 +72,7 @@ actions (`click` / `type_text` / `focus` / `named_action` / `scroll_to` / `menu_
 `drag` / `scroll` / `key` / `type_keys`), windows (`move_window` / `resize_window`),
 desktop (`clipboard_*` / `notify` / `open_url` / `speak` / `profile_search` /
 `fs_scan` / `fs_move`), local MCP (`mcp_local_*`) and the final `done`. Hard budget
-of 25 steps per run; when exhausted, "继续" resumes with the full context preserved.
+of 35 steps per run; when exhausted, "继续" resumes with the full context preserved.
 
 ### Safety mechanisms
 
@@ -284,7 +287,11 @@ ax-agent/
 │   ├── tool-utils.ts           # command parsing, tool args validation, helpers
 │   ├── examples.ts             # built-in example task chips
 │   ├── finder-archive.ts       # Finder archive workflow (fs_scan / fs_move)
-│   ├── tencent.ts / netease.ts # Tencent Video / NetEase Music self-drawn-UI decision machines
+│   ├── tencent.ts / tencent-ui.ts / netease.ts / netease-ui.ts
+│   │                           # Tencent Video / NetEase Music self-drawn-UI decision machines
+│   ├── windowctl.ts            # split-view docking / frontmost keeping
+│   ├── tree-utils.ts           # AX tree rendering / search pure functions
+│   ├── transcript.ts           # session transcript persistence
 │   ├── tools/                  # tool implementations by domain + shared helpers
 │   │   ├── shared.ts           #   ToolResult / observation snapshot / UI state machine / clamp / outline refresh
 │   │   ├── observe.ts          #   list_apps · read_screen · wait_for · ocr · find

@@ -52,7 +52,9 @@ AX 树、OCR 文字、会话内容全程不出本进程，不会发往任何外�
 ```
 
 兼容任意 OpenAI 兼容 API（DeepSeek / Qwen / Ollama / LM Studio…）：点输入框右侧
-**⚙️** 填 API 地址、密钥、模型，可一键测试连接。密钥保存在本机
+**⚙️** 填 API 地址、密钥、模型，可一键测试连接；另有 `max_tokens`（单次回复
+token 上限，默认 2048）与工具结果截断阈值（默认 2000 字符）两个可选配置，
+防止长输出 / 大工具结果撑爆上下文。密钥保存在本机
 `app_data_dir/llm.json`，HTTP 请求从 Rust 端发出，不经过 webview。
 
 模型可用的工具（**34 个**，见 `src/llm.ts` 的 DESKTOP_TOOLS + 会话指令）：应用管理
@@ -62,7 +64,7 @@ AX 树、OCR 文字、会话内容全程不出本进程，不会发往任何外�
 `double_click_at` / `right_click_at` / `drag` / `scroll` / `key` / `type_keys`）、
 窗口（`move_window` / `resize_window`）、桌面能力（`clipboard_*` / `notify` /
 `open_url` / `speak` / `profile_search` / `fs_scan` / `fs_move`）、本地 MCP
-（`mcp_local_*`）与收尾 `done`。每段任务步数上限 25 步，超限暂停后「继续」可携带
+（`mcp_local_*`）与收尾 `done`。每段任务步数上限 35 步，超限暂停后「继续」可携带
 完整上下文续跑（新额度）。
 
 ### 安全机制
@@ -242,7 +244,11 @@ ax-agent/
 │   ├── tool-utils.ts           # 指令解析、工具参数校验、辅助函数
 │   ├── examples.ts             # 内置示例任务 chips
 │   ├── finder-archive.ts       # 访达归档工作流（fs_scan / fs_move）
-│   ├── tencent.ts / netease.ts # 腾讯视频 / 网易云音乐自绘 UI 决策状态机
+│   ├── tencent.ts / tencent-ui.ts / netease.ts / netease-ui.ts
+│   │                           # 腾讯视频 / 网易云自绘 UI 决策状态机
+│   ├── windowctl.ts            # 分屏停靠 / 前台保持
+│   ├── tree-utils.ts           # AX 树渲染 / 检索纯函数
+│   ├── transcript.ts           # 会话转录落盘
 │   ├── tools/                  # 工具实现，按领域分模块 + shared 共享辅助
 │   │   ├── shared.ts           #   ToolResult / 观察快照 / UI 状态机 / clamp / 大纲刷新
 │   │   ├── observe.ts          #   list_apps · read_screen · wait_for · ocr · find

@@ -17,7 +17,7 @@ AX Agent 是**通用桌面操控基座**，不是快捷方式工具。它把「�
 两个通道互补，由前端统一编排。上层提供三种使用形态：
 
 1. **💬 会话（离线指令模式）**：本地正则解析中文指令 → 单步执行（不依赖 LLM）
-2. **🤖 智能模式（LLM 代理）**：OpenAI 兼容 API + tool calling，模型规划多步任务并自动执行（25 步预算）
+2. **🤖 智能模式（LLM 代理）**：OpenAI 兼容 API + tool calling，模型规划多步任务并自动执行（35 步预算）
 3. **🔎 检查器**：手动选应用、看 AX 树、逐元素操作（调试/开发用）
 
 ```
@@ -79,7 +79,7 @@ AX Agent 是**通用桌面操控基座**，不是快捷方式工具。它把「�
 **智能模式**（`runSteps`）——agent 循环，核心流程：
 
 ```
-┌─ 每段任务 (最多 MAX_AGENT_STEPS=25 步) ─────────────────────┐
+┌─ 每段任务 (最多 MAX_AGENT_STEPS=35 步) ─────────────────────┐
 │ 1. 注入系统提示: 权限缺失清单(environmentLimitNote)          │
 │    + 跨会话记忆(memoryList: 常用应用)                        │
 │ 2. 循环:                                                     │
@@ -171,10 +171,15 @@ Apple Vision（VNRecognizeTextRequest）截屏识别，返回**屏幕坐标**（
 
 ### 3.6 LLM 桥（llm.rs）
 
-- **配置**：保存设置（llm.json）> env/`.env` > 内置默认；`api_key` **永不过 IPC**（前端只知 has_key）
+- **配置**：保存设置（llm.json）> env/`.env` > 内置默认；`api_key` **永不过 IPC**（前端只知 has_key）；
+  `max_tokens`（回复 token 上限，默认 2048，env `AX_EXPLORER_LLM_MAX_TOKENS`）与
+  `tool_result_limit`（工具结果截断阈值，默认 2000 字符，env `AX_EXPLORER_LLM_TOOL_RESULT_LIMIT`）
+  均可在 ⚙️ 设置面板调整
 - **对话**：OpenAI 兼容 `/chat/completions`，流式（SSE → `llm://delta` 事件）与非流式双通道
 - **重试**：429 / 502 / 503 / 504 + 抖动退避
 - **网关**：tsm-hub 技能/工具/MCP 目录（`llm_skills` / `llm_catalog`），驱动示例任务 chips
+- **上下文预算**：`chat.ts` 的 `modelToolResult` 对工具结果做头尾截断（保留开头/结尾 + 截断标记），
+  done 最终报告不截断，防止大工具输出撑爆 LLM 上下文
 
 ### 3.7 桌面工具（desktop_tools.rs）
 
@@ -267,11 +272,13 @@ runTool 命中 dangerousReason
 ## 6. 测试架构
 
 ```
-tests/                          # 前端纯函数/状态机回归 (node:test, 159 用例)
+tests/                          # 前端纯函数/状态机回归 (node:test, 202 用例)
 ├── agent-config.test.mjs       # SYSTEM_PROMPT / dangerousReason / 环境注记
 ├── tool-utils.test.mjs         # 应用解析 / 窗口布局 / OCR 判定 (纯函数)
 ├── tree-utils.test.mjs         # AX 树渲染 / find 检索
 ├── guard.test.mjs              # 点击守卫 / 重复点击拦截
+├── chat.test.mjs               # agent 循环 / 工具结果截断 / max_tokens 注入
+├── b-class.test.mjs            # 分屏窗口布局
 ├── netease.test.mjs            # 网易云 OCR 词处理 / 歌名配对
 ├── netease-ui.test.mjs         # 网易云决策状态机 (真实会话词表)
 ├── tencent.test.mjs / tencent-ui.test.mjs   # 腾讯视频同构

@@ -38,7 +38,7 @@
 - [x] 🤖 智能模式开关：LLM 规划多步操作，应用执行（OpenAI 兼容 API，tool calling）
 - [x] Rust 端发请求：密钥存本地 llm.json，不出 webview
 - [x] ⚙️ 设置弹窗：API 地址 / 密钥 / 模型 + 测试连接
-- [x] 11 个工具：list_apps / open_app / read_screen / find / click / type_text / focus / move_window / element_at / ocr / done；步数上限 25 步，超限暂停后「继续」可携带完整上下文续跑（新额度）
+- [x] 11 个工具：list_apps / open_app / read_screen / find / click / type_text / focus / move_window / element_at / ocr / done；步数上限 35 步，超限暂停后「继续」可携带完整上下文续跑（新额度）
 - [x] LLM 限流自愈：共享 reqwest 连接池 + 200ms 限速门 + send_with_retry（RETRY_ATTEMPTS=5；429 尊重 Retry-After 上限 60s/缺省指数 2→32s+jitter；5xx 封顶 10s；其他 4xx 立即失败并 5s 冷却）
 - [x] 执行过程流式展示（每个工具调用的参数与结果摘要）
 - [x] 危险操作确认（如关闭应用、删除文本）
@@ -99,3 +99,6 @@
 - [x] 树转储性能：`AXUIElementCopyMultipleAttributeValues` 批量读属性（每节点 14 属性一次 IPC 往返），
       减少跨进程 IPC 开销 —— `ax_core::copy_multiple_attributes`
 - [x] 把 vite 端口、进程清理等 workspace 约定文档化进根 README（端口表 + 开发纪律已写入）
+- [x] LLM 上下文预算：`max_tokens` 回复上限（默认 2048，可调）+ 工具结果头尾截断
+      （`modelToolResult`，阈值可调）—— 防止长输出/大工具结果撑爆上下文
+      （ccb3135 / f6c3dfa）
