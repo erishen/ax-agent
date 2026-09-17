@@ -65,11 +65,15 @@ import { sessionTranscript } from "./transcript.ts";
 export const MAX_TOOL_RESULT_LEN = 2000;
 const TOOL_RESULT_TAIL_LEN = 300;
 
-/** 截断工具结果给模型用；超长时保留头 + 尾 + 截断标记。 */
-export function modelToolResult(result: string): string {
-  if (result.length <= MAX_TOOL_RESULT_LEN) return result;
-  const head = result.slice(0, MAX_TOOL_RESULT_LEN - TOOL_RESULT_TAIL_LEN);
-  const tail = result.slice(-TOOL_RESULT_TAIL_LEN);
+/**
+ * 截断工具结果给模型用；超长时保留头 + 尾 + 截断标记。
+ * `limit` 为 0 时不做截断（保留全量）。默认 2000，可在 ⚙️ 设置里调。
+ */
+export function modelToolResult(result: string, limit = MAX_TOOL_RESULT_LEN): string {
+  if (limit <= 0 || result.length <= limit) return result;
+  const headLen = Math.max(limit - TOOL_RESULT_TAIL_LEN, 0);
+  const head = result.slice(0, headLen);
+  const tail = result.slice(-Math.min(TOOL_RESULT_TAIL_LEN, limit));
   const omitted = result.length - head.length - tail.length;
   return `${head}\n…（结果过长，已截断 ${omitted} 字符；需要完整内容再单独读取）…\n${tail}`;
 }
@@ -565,6 +569,7 @@ async function runSteps(
   budget: number,
   seqBase: number,
   onProgress?: (s: SessionState) => void,
+  toolResultLimit = MAX_TOOL_RESULT_LEN,
 ): Promise<StepOutcome> {
   // Commit an intermediate state to the view without losing the return value.
   const commit = (s: SessionState): SessionState => {
@@ -766,7 +771,7 @@ async function runSteps(
           role: "tool",
           tool_call_id: call.id,
           name: call.function.name,
-          content: call.function.name === "done" ? result : modelToolResult(result),
+          content: call.function.name === "done" ? result : modelToolResult(result, toolResultLimit),
         });
         // `done` is the model's terminal report — end the segment right here
         // instead of looping (a follow-up LLM turn used to re-summarize and
@@ -847,7 +852,8 @@ async function resumeAgent(
 
   const working = reply({ ...state, pending: null }, "🤖 继续执行…（新额度 " + MAX_AGENT_STEPS + " 步）");
   onProgress?.(working);
-  const outcome = await runSteps(working, llmHistory, MAX_AGENT_STEPS, 0, onProgress);
+  const toolResultLimit = (await llmConfigured().catch(() => null))?.tool_result_limit ?? MAX_TOOL_RESULT_LEN;
+  const outcome = await runSteps(working, llmHistory, MAX_AGENT_STEPS, 0, onProgress, toolResultLimit);
   const next = outcome.state;
   void bringBack();
   if (outcome.ended === "budget") {
@@ -877,7 +883,8 @@ async function runAgent(
   // Hard budget: at most MAX_AGENT_STEPS tool steps per run, then we pause and
   // hand control back. No silent auto-continue — the step counter ("N/25")
   // must never be exceeded, otherwise it looks like the task runs away.
-  const outcome = await runSteps(working, llmHistory, MAX_AGENT_STEPS, 0, onProgress);
+  const toolResultLimit = (await llmConfigured().catch(() => null))?.tool_result_limit ?? MAX_TOOL_RESULT_LEN;
+  const outcome = await runSteps(working, llmHistory, MAX_AGENT_STEPS, 0, onProgress, toolResultLimit);
   working = outcome.state;
   void bringBack(); // task segment over (budget/paused/prose): window back
   if (outcome.ended === "budget") {
@@ -932,7 +939,8 @@ export async function confirmPending(
   }
 
   void hideAside(state.pid ?? undefined); // continuing the paused task: drive mode again
-  const outcome = await runSteps(working, llmHistory, MAX_AGENT_STEPS, 0, commit);
+  const toolResultLimit = (await llmConfigured().catch(() => null))?.tool_result_limit ?? MAX_TOOL_RESULT_LEN;
+  const outcome = await runSteps(working, llmHistory, MAX_AGENT_STEPS, 0, commit, toolResultLimit);
   const next = outcome.state;
   void bringBack();
   if (outcome.ended === "budget") {

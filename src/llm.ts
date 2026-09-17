@@ -16,6 +16,8 @@ export interface LlmConfig {
   model: string;
   /** 单次回复输出 token 上限；0 = 不设限。留空由后端默认（2048）。 */
   max_tokens?: number;
+  /** 喂回模型的单条工具结果截断上限（字符）；0 = 不截断。默认 2000。 */
+  tool_result_limit?: number;
 }
 
 export interface LlmMessage {
@@ -82,6 +84,8 @@ export interface LlmConfigured {
   model: string;
   /** 当前生效的输出 token 上限（0 = 不设限）。 */
   max_tokens: number;
+  /** 当前生效的工具结果截断上限（字符，0 = 不截断）。 */
+  tool_result_limit: number;
   has_key: boolean;
 }
 

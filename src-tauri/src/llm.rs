@@ -21,11 +21,19 @@ pub struct LlmConfig {
     /// 开放式长回复很常见）。0 表示不设限（兼容旧行为）。
     #[serde(default)]
     pub max_tokens: usize,
+    /// 喂回模型的单条工具结果截断上限（字符）。默认 2000：长 OCR/大纲累积
+    /// 是长任务 context 膨胀主因，保留头部+尾部比全量省得多。0 = 不截断。
+    #[serde(default)]
+    pub tool_result_limit: usize,
 }
 
 /// 默认输出上限：2048。agent 的每一步回复（正文或工具调用）几乎不会超过
 /// 这个量，超出即被上游截断，不会失控。
 pub const DEFAULT_MAX_TOKENS: usize = 2048;
+
+/// 默认工具结果截断上限（字符）。UI 气泡显示层固定 800，喂回模型用更高的
+/// 阈值，保留核心信息同时挡住无限增长。
+pub const DEFAULT_TOOL_RESULT_LIMIT: usize = 2000;
 
 impl Default for LlmConfig {
     fn default() -> Self {
@@ -34,6 +42,7 @@ impl Default for LlmConfig {
             api_key: String::new(),
             model: "deepseek-chat".to_string(),
             max_tokens: DEFAULT_MAX_TOKENS,
+            tool_result_limit: DEFAULT_TOOL_RESULT_LIMIT,
         })
     }
 }
@@ -57,7 +66,10 @@ impl LlmConfig {
         let max_tokens = std::env::var("AX_EXPLORER_LLM_MAX_TOKENS")
             .ok()
             .and_then(|v| v.trim().parse::<usize>().ok());
-        if base.is_none() && key.is_none() && model.is_none() && max_tokens.is_none() {
+        let tool_result_limit = std::env::var("AX_EXPLORER_LLM_TOOL_RESULT_LIMIT")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok());
+        if base.is_none() && key.is_none() && model.is_none() && max_tokens.is_none() && tool_result_limit.is_none() {
             return None;
         }
         Some(Self {
@@ -65,6 +77,7 @@ impl LlmConfig {
             api_key: key.unwrap_or_default(),
             model: model.unwrap_or_else(|| "deepseek-chat".to_string()),
             max_tokens: max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            tool_result_limit: tool_result_limit.unwrap_or(DEFAULT_TOOL_RESULT_LIMIT),
         })
     }
 }
@@ -121,6 +134,8 @@ pub struct LlmConfigured {
     pub model: String,
     /// 当前生效的输出 token 上限（0 = 不设限），用于设置面板回显。
     pub max_tokens: usize,
+    /// 当前生效的工具结果截断上限（字符，0 = 不截断）。
+    pub tool_result_limit: usize,
     pub has_key: bool,
 }
 
@@ -138,6 +153,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             base_url: saved.base_url,
             model: saved.model,
             max_tokens: saved.max_tokens,
+            tool_result_limit: saved.tool_result_limit,
             has_key: !saved.api_key.trim().is_empty(),
         });
     }
@@ -148,6 +164,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             base_url: env_cfg.base_url,
             model: env_cfg.model,
             max_tokens: env_cfg.max_tokens,
+            tool_result_limit: env_cfg.tool_result_limit,
             has_key: true,
         }),
         Some(env_cfg) => Ok(LlmConfigured {
@@ -156,6 +173,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             base_url: env_cfg.base_url,
             model: env_cfg.model,
             max_tokens: env_cfg.max_tokens,
+            tool_result_limit: env_cfg.tool_result_limit,
             has_key: false,
         }),
         None => Ok(LlmConfigured {
@@ -164,6 +182,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             base_url: LlmConfig::default().base_url,
             model: LlmConfig::default().model,
             max_tokens: LlmConfig::default().max_tokens,
+            tool_result_limit: LlmConfig::default().tool_result_limit,
             has_key: false,
         }),
     }

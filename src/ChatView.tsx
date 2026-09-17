@@ -46,6 +46,7 @@ function SettingsModal({
           api_key: "",            // never prefilled from saved config
           model: info.model,
           max_tokens: info.max_tokens,
+          tool_result_limit: info.tool_result_limit,
         });
       })
       .catch((e) => setStatus(`读取配置失败: ${String(e)}`));
@@ -100,6 +101,19 @@ function SettingsModal({
             placeholder="2048"
             onChange={(e) =>
               setConfig({ ...config, max_tokens: e.target.value === "" ? 0 : Number(e.target.value) })
+            }
+          />
+        </label>
+        <label>
+          工具结果截断（字符，0=不截断）
+          <input
+            type="number"
+            min={0}
+            step={256}
+            value={config.tool_result_limit ?? 2000}
+            placeholder="2000"
+            onChange={(e) =>
+              setConfig({ ...config, tool_result_limit: e.target.value === "" ? 0 : Number(e.target.value) })
             }
           />
         </label>

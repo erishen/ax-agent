@@ -102,3 +102,12 @@ test("modelToolResult: boundary length is not truncated", () => {
   const exact = "x".repeat(MAX_TOOL_RESULT_LEN);
   assert.equal(modelToolResult(exact), exact);
 });
+
+test("modelToolResult: custom limit and 0=no-truncate", () => {
+  const long = "y".repeat(500);
+  const small = modelToolResult(long, 100);
+  assert.ok(small.length < long.length, "custom small limit truncates");
+  assert.match(small, /已截断 \d+ 字符/);
+  assert.equal(modelToolResult(long, 0), long, "limit 0 keeps full result");
+  assert.equal(modelToolResult(long, 2000), long, "limit above length keeps full");
+});
