@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help dev build install install-build uninstall verify check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health
+.PHONY: help dev build install install-build uninstall verify check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health cert
 
 help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -24,8 +24,11 @@ dev: ## 启动桌面应用（只清理本项目的残留进程与 1520 端口，
 build: ## 构建 release 安装包（.app / .dmg）
 	pnpm run tauri build
 
-build-app: ## 构建 release 的 .app（不生成 DMG，本地安装用，避免污染发布包）
-	pnpm run tauri build --bundles app
+cert: ## 创建本地代码签名证书（AX Agent Local Dev）——稳定签名，辅助功能授权只需一次（幂等）
+	bash scripts/create-dev-cert.sh
+
+build-app: ## 构建 release 的 .app（不生成 DMG，本地安装用；用开发证书签名，保证授权稳定）
+	APPLE_SIGNING_IDENTITY="AX Agent Local Dev" pnpm run tauri build --bundles app
 
 install: build-app ## 构建（仅 .app）并安装到 /Applications（先停止运行中的实例；选项: make install INSTALL_FLAGS="-y"）
 	@echo "[install] 停止运行中的 ax-agent 实例..."
