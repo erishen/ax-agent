@@ -117,7 +117,7 @@ export function dangerousReason(name: string, args: Record<string, unknown>): st
 }
 
 /** Hard step budget per agent run (each step = 1 model turn + its tool executions). */
-export const MAX_AGENT_STEPS = 25;
+export const MAX_AGENT_STEPS = 35;
 
 /** One auto-continue nudge injected between segments (also used by resume). */
 export const CONTINUE_NUDGE = "继续：从上一步停下的地方接着完成目标，做完后用 done 汇报。";

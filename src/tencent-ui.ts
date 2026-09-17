@@ -254,8 +254,9 @@ export class TencentUiState {
         ? buildPairs(words, { seenTitles: this.seenTitles, detailPage, verifiedScores: this.detailVerifiedScores })
         : [];
     for (const p of this.lastListPairs) {
+      const ok = parseFloat(p.score) >= 9;
       pairs.push(
-        `「${p.title}」评分 ${p.score} 分${p.verified ? "（详情页已复核）" : ""} → 点片名坐标 (${p.x}, ${p.y})`,
+        `「${p.title}」评分 ${p.score} 分${ok ? "【✓达标】" : "【不达标】"}${p.verified ? "（详情页已复核）" : ""} → 点片名坐标 (${p.x}, ${p.y})`,
       );
     }
     pairs = [...new Set(pairs)].slice(0, MAX_PAIR_HINTS);

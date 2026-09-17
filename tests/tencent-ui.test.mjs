@@ -167,7 +167,7 @@ test("processOcr: detail-verified score overrides badge on return (16:51 flow)",
     W("我看见两朵一样的云", 851, 820, 140, 17),
     W("9.0", 860, 850, 30, 15),
   ]);
-  assert.match(hints, /评分 8.3 分（详情页已复核）/);
+  assert.match(hints, /评分 8.3 分【不达标】（详情页已复核）/);
 });
 
 test("sortVerifyReminder: one-shot — armed then consumed", () => {
