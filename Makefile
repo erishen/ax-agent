@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help dev build check clean clean-macros fe-install fe-build typecheck lint fmt clippy release rpc rpc-ping rpc-health
+.PHONY: help dev build check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health
 
 help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -26,6 +26,9 @@ build: ## 构建 release 安装包（.app / .dmg）
 
 fe-install: ## 安装前端依赖
 	pnpm install
+
+audit: ## 前端依赖漏洞审计（npmmirror 无 audit endpoint，改用官方 registry 查询）
+	pnpm audit --registry=https://registry.npmjs.org --prod
 
 fe-build: ## 仅构建前端产物（tsc + vite → dist/）
 	pnpm run build
