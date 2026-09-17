@@ -26,6 +26,14 @@ DEFAULT_PREFIX="/Applications"
 APP_NAME="AX Agent.app"
 APP_ID="cn.erishen.ax-agent"
 
+# 非交互（无 TTY stdin，如 CI / 后台任务）：确认类 read 会永久挂起。
+# 此时一律拒绝覆盖并退出，避免卡死；需要强制覆盖用 -y/-f。
+if [ ! -t 0 ]; then
+  echo "非交互终端（stdin 无 TTY）：跳过所有交互确认。" >&2
+  echo "如需无人值守安装请加 -y（自动停实例并覆盖）。" >&2
+  exit 1
+fi
+
 SRC="$DEFAULT_SRC"
 PREFIX="$DEFAULT_PREFIX"
 YES=0
