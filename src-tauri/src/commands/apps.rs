@@ -110,6 +110,14 @@ pub fn ax_local_apps_config() -> LocalAppsConfig {
     ];
     for p in candidates {
         if let Ok(text) = std::fs::read_to_string(&p) {
+            // apps.local.json holds per-machine profile data (pinned/hidden
+            // apps, extra tasks): keep it owner-only even if the user's
+            // editor created it with default 0644.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+            }
             if let Ok(cfg) = serde_json::from_str::<LocalAppsFile>(&text) {
                 return cfg.into();
             }
