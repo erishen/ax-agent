@@ -42,7 +42,12 @@ export function redactSensitive(text: string): string {
       "$1=***",
     )
     .replace(/\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, "***@$2")
-    .replace(/\b(1[3-9]\d)(\d{4})(\d{4})\b/g, "$1****$3");
+    // Mainland-China mobile numbers: bare 11 digits, spaced/dashed variants
+    // (138 1234 5678 / 138-1234-5678), and +86 / 86-prefixed forms. Head and
+    // tail are kept so the number stays recognizable as a phone. The prefixed
+    // rule runs first so the prefix is consumed along with the digits.
+    .replace(/(?<![\d.])\+?86[\s-]?(1[3-9]\d)[\s-]?(\d{4})[\s-]?(\d{4})\b/g, "$1****$3")
+    .replace(/\b(1[3-9]\d)[\s-]?(\d{4})[\s-]?(\d{4})\b/g, "$1****$3");
 }
 
 /** Structural subset of SessionState that sessionTranscript needs — keeps this

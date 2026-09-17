@@ -46,6 +46,20 @@ test("redactSensitive: masks emails (domain kept) and CN mobiles (head/tail kept
     "联系 ***@example.com 或 138****5678");
 });
 
+test("redactSensitive: masks CN mobile variants (spaces / dashes / +86 prefix)", () => {
+  assert.equal(redactSensitive("138 1234 5678"), "138****5678");
+  assert.equal(redactSensitive("138-1234-5678"), "138****5678");
+  assert.equal(redactSensitive("+86 138 1234 5678"), "138****5678");
+  assert.equal(redactSensitive("电话：+8613812345678"), "电话：138****5678");
+  assert.equal(redactSensitive("8613812345678"), "138****5678");
+  // 12-digit strings are NOT partial-masked; short numbers stay untouched
+  assert.equal(redactSensitive("139123456789"), "139123456789");
+  assert.equal(redactSensitive("110"), "110");
+  // numeric strings that are not mobiles (dates, ids) are untouched
+  assert.equal(redactSensitive("2026-09-17 11-31-41"), "2026-09-17 11-31-41");
+  assert.equal(redactSensitive("count=1381234"), "count=1381234");
+});
+
 test("redactSensitive: leaves ordinary text untouched", () => {
   const plain = "帮我打开腾讯视频，进入电影频道找评分 9 分以上的片子";
   assert.equal(redactSensitive(plain), plain);
