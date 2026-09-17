@@ -100,10 +100,14 @@ export async function toolWaitFor(state: SessionState, args: Record<string, unkn
   if (pid === null)
     return { result: "尚未选择应用，先用 open_app 打开一个", state };
   if (!keyword && !ocrText) {
+    // Empty wait_for burns a step and proves nothing (19:04 session: 9×,
+    // 20:08 session: 4× — the model kept calling it despite the hint).
+    // Refuse it outright so the model must pick a real target.
     return {
       result:
-        "wait_for 未指定目标，仅报告界面是否变化（不推荐：空等待常是浪费步数）。" +
-        "请给 element（等 AX 元素出现/消失）或 text（等屏幕文字出现/消失，自绘 UI 用）后再等。",
+        "⛔ wait_for 必须带 text= 或 element= 目标（这次调用被拒，未执行等待）。" +
+        "自绘 UI 用 text=页面特征词（如「评分」「简介」「立即播放」）；等某片播放证据用 text=播放中（注意顶部条的「播放中」不算播放证据）。" +
+        "不要在无目标时调用 wait_for——直接 ocr 刷新当前画面即可。",
       state,
     };
   }
@@ -138,8 +142,15 @@ export async function toolWaitFor(state: SessionState, args: Record<string, unkn
         // Nav words are always visible — matching one does not prove a
         // page switch, and the model must not treat it as one.
         const navWarn = navWordNote(ocrText, gone);
+        // 「播放中」 in the top strip (y<150) is the always-on mini-player
+        // line, NOT fresh playback evidence (20:08 session: the model took
+        // the top-strip hit as proof the clicked film was playing).
+        const stripWarn =
+          !gone && /播放中|正在播放/.test(ocrText) && hit && hit.y < 150
+            ? "\n⚠️ 注意：命中的「播放中」在顶部条（y<150）——这是常驻小窗/旧片状态，【不算】播放证据。播放证据=播放器控件出现（选集/倍速/进度条/时间码）或 ocr 里底部播放栏/详情页出现该片名。"
+            : "";
         return {
-          result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}${navWarn}`,
+          result: `等待完成（${waited}s）：屏幕文字「${ocrText}」已${gone ? "消失" : `出现${where}`}${navWarn}${stripWarn}`,
           state,
         };
       }

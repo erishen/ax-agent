@@ -109,7 +109,12 @@ test("guard: sort-tab click on a rating-less list → note + setSortVerify", () 
   assert.match(r.note, /排序\/筛选标签/);
 });
 
-test("guard: channel-home click (rated feed, no detail markers) → note, no sort verify", () => {
+test("guard: channel-home click (hero carousel, no detail markers) → HARD BLOCK (20:08 session)", () => {
+  // 20:08: the model ignored the warn and clicked 立即播放 on the rotating
+  // hero card 3× (first fired, playing an unverified film; the rest were
+  // only stopped by the duplicate detector). Every non-nav click on the
+  // channel home must be refused — the correct move is scrolling into the
+  // list page.
   const r = buildClickGuard({
     ...base,
     x: 500,
@@ -117,7 +122,8 @@ test("guard: channel-home click (rated feed, no detail markers) → note, no sor
     lastOcrChannelHome: true,
   });
   assert.equal(r.setSortVerify, false);
-  assert.match(r.note, /频道首页/);
+  assert.match(r.blocked ?? "", /⛔ 当前是频道首页/);
+  assert.match(r.blocked ?? "", /向下滚动进入列表页/);
 });
 
 test("guard: top strip click (y<150, x≥400) → hot-list warning (16:43 session)", () => {

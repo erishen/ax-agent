@@ -246,9 +246,17 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
       };
     }
     if (opts.lastOcrChannelHome && !opts.lastOcrDetail && !opts.lastOcrPlayer) {
+      // Channel-home hero cards AUTO-ROTATE and play directly on click —
+      // warn is not enough (20:08 session: the model ignored the warn and
+      // clicked 立即播放 on the hero card 3×; the first fired and the rest
+      // were only stopped by the duplicate-click detector). The correct
+      // channel-home move is scrolling into the list page, so refuse every
+      // non-nav click here.
       return {
-        note:
-          "\n⚠️ 当前是频道首页（热播榜大卡）：大卡评分真实（可作候选提示），但点大卡会【直接播放】未经复核的片。正确路径：① 若配对清单里有候选片名，点它的片名坐标进详情页，复核评分与题材后再点播放；② 若无候选或想浏览更多，向下滚动进入列表页（出现「最热/高分好评」筛选栏）再选片。不要在频道首页点非片名区域。",
+        blocked:
+          `⛔ 当前是频道首页（热播榜大卡，自动轮播）：${verb} (${x}, ${y}) 落在 hero 大卡区，点大卡或「立即播放」会【直接播放】未经详情页复核的片（评分徽标和轮播都不可信——大卡会自己换片）。` +
+          "正确路径：向下滚动进入列表页（出现「最热/高分好评/最新」筛选栏），在列表页按配对坐标点片名进详情页，复核评分与题材后再点播放。",
+        note: "",
         setSortVerify: false,
       };
     }
