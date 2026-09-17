@@ -14,6 +14,8 @@ export interface LlmConfig {
   base_url: string;
   api_key: string;
   model: string;
+  /** 单次回复输出 token 上限；0 = 不设限。留空由后端默认（2048）。 */
+  max_tokens?: number;
 }
 
 export interface LlmMessage {
@@ -78,6 +80,8 @@ export interface LlmConfigured {
   source: "settings" | "env" | "env-partial" | "default";
   base_url: string;
   model: string;
+  /** 当前生效的输出 token 上限（0 = 不设限）。 */
+  max_tokens: number;
   has_key: boolean;
 }
 

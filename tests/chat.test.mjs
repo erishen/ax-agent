@@ -14,6 +14,8 @@ import {
   newSession,
   sessionTranscript,
   stripMarkdownSyntax,
+  modelToolResult,
+  MAX_TOOL_RESULT_LEN,
 } from "../src/chat.ts";
 
 test("handleUtterance: blank input returns the same state (no reply)", async () => {
@@ -78,4 +80,25 @@ test("newSession: starts empty with a session header transcript", () => {
   assert.ok(Array.isArray(s.messages));
   assert.equal(s.messages.length, 0);
   assert.match(sessionTranscript(s), /# AX Agent 会话记录/);
+});
+
+// --- max_tokens / 工具结果截断（LLM 输出开销防护） ---
+
+test("modelToolResult: short results pass through untouched", () => {
+  const short = "oc token=24 model=z-ai/glm-5.3-flash";
+  assert.equal(modelToolResult(short), short);
+});
+
+test("modelToolResult: long results keep head + tail with a marker", () => {
+  const long = "A".repeat(MAX_TOOL_RESULT_LEN + 5000) + "Z".repeat(50);
+  const out = modelToolResult(long);
+  assert.ok(out.length < long.length, "truncated below original");
+  assert.ok(out.startsWith("A".repeat(200)), "head kept");
+  assert.ok(out.endsWith("Z".repeat(50)), "tail kept");
+  assert.match(out, /已截断 \d+ 字符/);
+});
+
+test("modelToolResult: boundary length is not truncated", () => {
+  const exact = "x".repeat(MAX_TOOL_RESULT_LEN);
+  assert.equal(modelToolResult(exact), exact);
 });

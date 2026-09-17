@@ -45,6 +45,7 @@ function SettingsModal({
           base_url: info.base_url,
           api_key: "",            // never prefilled from saved config
           model: info.model,
+          max_tokens: info.max_tokens,
         });
       })
       .catch((e) => setStatus(`读取配置失败: ${String(e)}`));
@@ -87,6 +88,19 @@ function SettingsModal({
             value={config.model}
             placeholder="deepseek-chat"
             onChange={(e) => setConfig({ ...config, model: e.target.value })}
+          />
+        </label>
+        <label>
+          单次回复上限（tokens，0=不设限）
+          <input
+            type="number"
+            min={0}
+            step={256}
+            value={config.max_tokens ?? 2048}
+            placeholder="2048"
+            onChange={(e) =>
+              setConfig({ ...config, max_tokens: e.target.value === "" ? 0 : Number(e.target.value) })
+            }
           />
         </label>
         {status && <p className="settings-status">{status}</p>}

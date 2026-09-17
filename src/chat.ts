@@ -54,6 +54,25 @@ import {
 } from "./agent-config.ts";
 import { bringBack, focusSelf, hideAside } from "./windowctl.ts";
 import { sessionTranscript } from "./transcript.ts";
+
+/**
+ * 模型侧工具结果长度上限。UI 气泡用 withStepResult 已截到 800 字符，
+ * 但喂回模型的 llmHistory 此前是全量——35 步任务里每步 OCR/大纲结果全文
+ * 累积，context 快速膨胀，既推高单次 token 开销又拖慢响应。这里保留头部 +
+ * 尾部（尾部常有"计数/汇总"结论）并标注截断，让模型既拿到核心信息，
+ * 又不至于让历史无限增长。
+ */
+export const MAX_TOOL_RESULT_LEN = 2000;
+const TOOL_RESULT_TAIL_LEN = 300;
+
+/** 截断工具结果给模型用；超长时保留头 + 尾 + 截断标记。 */
+export function modelToolResult(result: string): string {
+  if (result.length <= MAX_TOOL_RESULT_LEN) return result;
+  const head = result.slice(0, MAX_TOOL_RESULT_LEN - TOOL_RESULT_TAIL_LEN);
+  const tail = result.slice(-TOOL_RESULT_TAIL_LEN);
+  const omitted = result.length - head.length - tail.length;
+  return `${head}\n…（结果过长，已截断 ${omitted} 字符；需要完整内容再单独读取）…\n${tail}`;
+}
 // Re-export the transcript helpers so existing importers (ChatView, tests)
 // keep working without touching their import sites.
 export { redactSensitive, sessionTranscript, stripMarkdownSyntax } from "./transcript.ts";
@@ -741,7 +760,14 @@ async function runSteps(
             m.id === stepId ? { ...m, text: withStepResult(heading, result) } : m,
           ),
         });
-        llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: result });
+        // `done` 的 result 是给用户的最终报告，保持全量；其余工具结果
+        // 截断防 context 膨胀（长 OCR/大纲累积是长任务 token 超支主因）。
+        llmHistory.push({
+          role: "tool",
+          tool_call_id: call.id,
+          name: call.function.name,
+          content: call.function.name === "done" ? result : modelToolResult(result),
+        });
         // `done` is the model's terminal report — end the segment right here
         // instead of looping (a follow-up LLM turn used to re-summarize and
         // duplicate the text in the transcript). When the model also emitted

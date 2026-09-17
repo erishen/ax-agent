@@ -16,7 +16,16 @@ pub struct LlmConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// 单次回复的输出 token 上限。默认 2048：agent 工具调用回复通常远短于此，
+    /// 但能挡住长文本失控输出，避免长回复把单次开销推高（部分模型的
+    /// 开放式长回复很常见）。0 表示不设限（兼容旧行为）。
+    #[serde(default)]
+    pub max_tokens: usize,
 }
+
+/// 默认输出上限：2048。agent 的每一步回复（正文或工具调用）几乎不会超过
+/// 这个量，超出即被上游截断，不会失控。
+pub const DEFAULT_MAX_TOKENS: usize = 2048;
 
 impl Default for LlmConfig {
     fn default() -> Self {
@@ -24,6 +33,7 @@ impl Default for LlmConfig {
             base_url: "https://api.deepseek.com".to_string(),
             api_key: String::new(),
             model: "deepseek-chat".to_string(),
+            max_tokens: DEFAULT_MAX_TOKENS,
         })
     }
 }
@@ -44,13 +54,17 @@ impl LlmConfig {
         let base = std::env::var("AX_EXPLORER_LLM_BASE_URL").ok().filter(|v| !v.trim().is_empty());
         let key = std::env::var("AX_EXPLORER_LLM_API_KEY").ok().filter(|v| !v.trim().is_empty());
         let model = std::env::var("AX_EXPLORER_LLM_MODEL").ok().filter(|v| !v.trim().is_empty());
-        if base.is_none() && key.is_none() && model.is_none() {
+        let max_tokens = std::env::var("AX_EXPLORER_LLM_MAX_TOKENS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok());
+        if base.is_none() && key.is_none() && model.is_none() && max_tokens.is_none() {
             return None;
         }
         Some(Self {
             base_url: base.unwrap_or_else(|| "https://api.deepseek.com".to_string()),
             api_key: key.unwrap_or_default(),
             model: model.unwrap_or_else(|| "deepseek-chat".to_string()),
+            max_tokens: max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
         })
     }
 }
@@ -105,6 +119,8 @@ pub struct LlmConfigured {
     /// Non-sensitive bits for pre-filling the settings panel.
     pub base_url: String,
     pub model: String,
+    /// 当前生效的输出 token 上限（0 = 不设限），用于设置面板回显。
+    pub max_tokens: usize,
     pub has_key: bool,
 }
 
@@ -121,6 +137,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             source: "settings".to_string(),
             base_url: saved.base_url,
             model: saved.model,
+            max_tokens: saved.max_tokens,
             has_key: !saved.api_key.trim().is_empty(),
         });
     }
@@ -130,6 +147,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             source: "env".to_string(),
             base_url: env_cfg.base_url,
             model: env_cfg.model,
+            max_tokens: env_cfg.max_tokens,
             has_key: true,
         }),
         Some(env_cfg) => Ok(LlmConfigured {
@@ -137,6 +155,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             source: "env-partial".to_string(),
             base_url: env_cfg.base_url,
             model: env_cfg.model,
+            max_tokens: env_cfg.max_tokens,
             has_key: false,
         }),
         None => Ok(LlmConfigured {
@@ -144,6 +163,7 @@ pub async fn llm_configured(app: tauri::AppHandle) -> Result<LlmConfigured, Stri
             source: "default".to_string(),
             base_url: LlmConfig::default().base_url,
             model: LlmConfig::default().model,
+            max_tokens: LlmConfig::default().max_tokens,
             has_key: false,
         }),
     }
@@ -421,18 +441,23 @@ pub async fn llm_chat(
         return Err("尚未配置 LLM：请点右上角 ⚙️ 填写 API 地址 / 密钥 / 模型".to_string());
     }
 
-    let body = serde_json::json!({
+    let tools_json = tools.iter().map(|t| serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters,
+        }
+    })).collect::<Vec<_>>();
+    let mut body = serde_json::json!({
         "model": config.model,
         "messages": messages,
-        "tools": tools.iter().map(|t| serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters,
-            }
-        })).collect::<Vec<_>>(),
+        "tools": tools_json,
     });
+    // 输出 token 上限：0 = 不设限（旧行为）。默认 2048，防长回复过度消耗。
+    if config.max_tokens > 0 {
+        body["max_tokens"] = serde_json::json!(config.max_tokens);
+    }
 
     let url = endpoint(&config.base_url);
     let key = config.api_key.trim().to_string();
@@ -582,6 +607,10 @@ pub async fn llm_chat_stream(
         })).collect::<Vec<_>>(),
         "stream": true,
     });
+    // 输出 token 上限：0 = 不设限（旧行为）。默认 2048，防长回复过度消耗。
+    if config.max_tokens > 0 {
+        body["max_tokens"] = serde_json::json!(config.max_tokens);
+    }
     // Some gateways reject "stream_options" they don't know; send usage-free
     // standard SSE only.
     if let Some(obj) = body.as_object_mut() {
