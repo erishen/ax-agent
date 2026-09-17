@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  AX Agent — code-signing entitlements (hardened runtime).
+
+	  NOT sandboxed by design: the app drives other applications via
+	  Accessibility (TCC-gated, not an entitlement) and reads/writes user
+	  files, so com.apple.security.app-sandbox must stay ABSENT.
+
+	  No Apple Events entitlement: AppleScript (osascript) is used only for
+	  our own "display notification" — never `tell application` on other apps
+	  (those go through AX instead).
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.device.screen-capture</key>
+	<true/>
+</dict>
+</plist>

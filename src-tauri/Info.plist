@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Custom Info.plist keys merged with Tauri's generated plist at build
+	  time (tauri-build picks up src-tauri/Info.plist automatically).
+
+	  Screen recording: used by `screencapture` for OCR of the driven app's
+	  window. Accessibility and Input Monitoring are TCC-gated and have no
+	  usage-description key to declare here.
+	-->
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>AX Agent 需要屏幕录制权限来读取窗口画面并执行文字识别（OCR），以便代你操作应用界面。</string>
+</dict>
+</plist>
