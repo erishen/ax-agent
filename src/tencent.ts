@@ -110,9 +110,22 @@ export function detectPage(joined: string): PageFlags {
       const m = l.match(/@\(\d+, (\d+)\)/);
       return m ? +m[1] : 0;
     });
+  // A real channel-home is EITHER the rated channel feed (电影热播榜第1名
+  // in the content area, y≥250) OR a hero-card channel home whose 热播榜
+  // row was not OCR'd (19:04 session: the 电影 channel home showed the
+  // 伪钞重案 9.0 hero card + 立即播放 and NO list filter band, but carried
+  // the global 热搜总榜 ticker — the old "no ticker + 热播榜≥250" rule
+  // misread it as a plain list page, the guard let clicks through, and the
+  // model burned the whole budget on dead hero coordinates). The nav home
+  // never shows a content-area rating badge, so the hero test below cannot
+  // fire there.
+  const heroChannelHome =
+    /\d+\.\d\s*分/.test(j) &&
+    /立即播放/.test(j) &&
+    !/高分|最热|最新|推荐|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(j);
   const channelHome =
-    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放|热搜总榜|飙升总榜/.test(j) &&
-    hotWordsY.some((y) => y >= 250);
+    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放/.test(j) &&
+    (hotWordsY.some((y) => y >= 250) || heroChannelHome);
   // Account / personal-center page: the top banner carries the user's
   // account info (账号设置 / 我的主页 / 积分 / 钻石). Its left nav has no
   // channel entries — classify it separately so the model isn't told to
@@ -343,47 +356,54 @@ export function buildPairs(
   for (const r of words) {
     const rScore = ratingText(r.text);
     if (!rScore || r.confidence < MIN_CONFIDENCE) continue;
-    const title = words
-      .filter(
-        (t) =>
-          t !== r &&
-          ratingText(t.text) === null &&
-          t.confidence >= MIN_CONFIDENCE &&
-          t.text.length >= 2 &&
-          TITLE_CHARS.test(t.text) &&
-          !NAV_RE.test(t.text) &&
-          !/月\d+日|定档|上映|巨制|打爆/.test(t.text) &&
-          // Popularity badges (三在追破200万 / 预约破200万 / 实时热度超3万 /
-          // 讨论破100万) are heat counters, not film titles — clicking one
-          // does nothing and the model burns steps re-clicking it
-          // (17:57 session: 「三在追破200万」 was paired with a 9.7 and the
-          // click at its coords got no response).
-          !/在追破|预约破|实时热度|热度超|讨论破|播放量|弹幕/.test(t.text) &&
-          // Actor/genre rows read as "雷佳音 张国立 警匪打黑" —
-          // space-separated multi-word lines are cast + genre, not a film
-          // title (14:05 session: it was paired with a 9.4 rating that
-          // belonged to the neighbouring film).
-          !/\s/.test(t.text) &&
-          // Episode/series labels (第二部/第3集) are episode chips, not
-          // titles (14:05 session: 「第二部」 scored 9.4).
-          !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text) &&
-          // List pages have two card layouts, distinguished by where the
-          // rating badge sits relative to the title:
-          //  A) rating directly below the title (dx < 100, dy > 0) —
-          //     columns ~200px apart, so a far dx at dy>0 is a NEIGHBOUR
-          //     card's badge (16:51 session: 红海行动 '9.8' was an
-          //     adjacent-card rating, the film is ~8.3);
-          //  B) 高分-sorted lists: badge at the card top-right, title
-          //     below it (dy < 0, dx up to ~300 — 17:06 session).
-          // A rating ABOVE a title within card width is the same card;
-          // a rating BELOW a title only pairs within the tight column.
-          // Detail pages pair differently (title above rating, dx≈109).
-          (opts.detailPage ||
-            (Math.abs(t.y - r.y) < PAIR_CARD_DY &&
-              (r.y - t.y < 0
-                ? Math.abs(cx(t) - cx(r)) < PAIR_CARD_DX
-                : Math.abs(cx(t) - cx(r)) < PAIR_COL_DX))),
-      )
+    const base = words.filter(
+      (t) =>
+        t !== r &&
+        ratingText(t.text) === null &&
+        t.confidence >= MIN_CONFIDENCE &&
+        t.text.length >= 2 &&
+        TITLE_CHARS.test(t.text) &&
+        !NAV_RE.test(t.text) &&
+        !/月\d+日|定档|上映|巨制|打爆/.test(t.text) &&
+        // Popularity badges (三在追破200万 / 预约破200万 / 实时热度超3万 /
+        // 讨论破100万) are heat counters, not film titles — clicking one
+        // does nothing and the model burns steps re-clicking it
+        // (17:57 session: 「三在追破200万」 was paired with a 9.7 and the
+        // click at its coords got no response).
+        !/在追破|预约破|实时热度|热度超|讨论破|播放量|弹幕/.test(t.text) &&
+        // Actor/genre rows read as "雷佳音 张国立 警匪打黑" —
+        // space-separated multi-word lines are cast + genre, not a film
+        // title (14:05 session: it was paired with a 9.4 rating that
+        // belonged to the neighbouring film).
+        !/\s/.test(t.text) &&
+        // Episode/series labels (第二部/第3集) are episode chips, not
+        // titles (14:05 session: 「第二部」 scored 9.4).
+        !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text) &&
+        // Detail pages pair differently (title above rating, dx≈109),
+        // so dy/dx card constraints do not apply there.
+        (opts.detailPage || Math.abs(t.y - r.y) < PAIR_CARD_DY),
+    );
+    // Card layouts differ on where the real title sits relative to the
+    // rating badge:
+    //  A) rating directly below the title (dx < 100, dy > 0) — columns
+    //     ~200px apart, so a far dx at dy>0 is a NEIGHBOUR card's badge
+    //     (16:51 session: 红海行动 '9.8' was an adjacent-card rating);
+    //  B) 高分-sorted lists: badge at the card top-right, title below it
+    //     (dy < 0, dx up to ~300 — 17:06 session).
+    // Channel-home hero cards (19:04) additionally put a poster TAGLINE
+    // below the rating (不死老头单挑全员恶人 under 永生战士2 9.2). The
+    // tagline wins the old flat dx<300 match and the click on it does
+    // nothing. Prefer the card title ABOVE the badge whenever one exists
+    // (same-column rule), and only fall back to the below-badge list
+    // title when there is no above candidate.
+    const above = base.filter(
+      (t) => r.y - t.y > 0 && Math.abs(cx(t) - cx(r)) < PAIR_COL_DX,
+    );
+    const below = base.filter(
+      (t) => r.y - t.y < 0 && Math.abs(cx(t) - cx(r)) < PAIR_CARD_DX,
+    );
+    const pool = opts.detailPage ? base : above.length > 0 ? above : below;
+    const title = pool
       .map((t) => ({
         t,
         d: Math.abs(cx(t) - cx(r)) * 0.6 + Math.abs(t.y - r.y),

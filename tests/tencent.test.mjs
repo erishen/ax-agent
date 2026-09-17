@@ -137,6 +137,37 @@ test("detectPage: 高分-sorted list WITH ratings (filter band, no back-key OCR)
   assert.equal(f.channelHome, false);
 });
 
+test("detectPage: 电影 channel-home hero (热搜总榜 ticker + 立即播放 + rated hero, NO 热播榜 row OCR'd) is channelHome (19:04 session step 2)", () => {
+  // The film-channel home carried the global 热搜总榜 ticker AND the hero
+  // 热播榜 row was not OCR'd that frame — the old "no ticker + 热播榜≥250"
+  // rule misread it as a plain list page, the guard let dead hero clicks
+  // through, and the model burned the whole 35-step budget on stale coords.
+  const words = [
+    W("兰香如故", 523, 80, 62, 17),
+    W("热搜总榜第1名", 582, 82, 97, 13),
+    W("腾讯视频", 75, 104, 73, 19),
+    W("首页", 55, 155, 62, 19),
+    W("你正在追", 86, 196, 62, 19),
+    W("VIP会员", 86, 239, 55, 17),
+    W("电视剧", 53, 276, 46, 17),
+    W("电影", 53, 318, 33, 17),
+    W("综艺", 53, 359, 66, 22),
+    W("妫紗重笄", 237, 365, 159, 50),
+    W("动漫", 86, 401, 33, 17),
+    W("白9.0分", 235, 438, 57, 17),
+    W("少儿", 86, 442, 33, 17),
+    W("吴樾 谭凯 警匪较量", 235, 468, 136, 19),
+    W("NBA", 88, 485, 33, 13),
+    W("吴樾包贝尔两代伪钞教父狂飙对决", 235, 494, 233, 19),
+    W("短剧", 86, 526, 33, 17),
+    W("立即播放", 290, 551, 77, 22),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, true, "hero channel home must not pass as a list page");
+  assert.equal(f.homeLike, false);
+  assert.equal(f.listPage, false);
+});
+
 test("buildPairs: 高分-list layout B (badge top-right, dx≈260, dy<0) pairs (17:06 session step 17)", () => {
   const words = [
     W("最新", 288, 125, 37, 20),
@@ -179,6 +210,38 @@ test("buildPairs: 预约破200万 / 实时热度超3万 badges are NOT titles", 
   ];
   const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
   assert.deepEqual(pairs, []);
+});
+
+test("buildPairs: hero card prefers the title ABOVE the badge over the tagline BELOW it (19:04 session: 永生战士2 not 不死老头单挑全员恶人)", () => {
+  // The channel-home hero card lays out 片名(永生战士2) above the rating
+  // and a poster TAGLINE (不死老头单挑全员恶人) below it. The old flat
+  // dx<300 match let the tagline win (its d was smaller); clicking the
+  // tagline does nothing and the session burned steps on dead coords.
+  const words = [
+    W("永生战士2", 228, 371, 180, 48),
+    W("白9.2分", 235, 438, 57, 17),
+    W("乔玛•汤米拉 史蒂芬•朗 男性传奇", 233, 468, 229, 19),
+    W("不死老头单挑全员恶人", 235, 494, 156, 17),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(
+    pairs.map((p) => [p.title, p.score, p.x, p.y]),
+    [["永生战士2", "9.2", 318, 395]],
+  );
+});
+
+test("buildPairs: 极限审判 hero pairs its title (above badge), not the 星爵 tagline (19:04 session step 25)", () => {
+  const words = [
+    W("极限审判", 246, 374, 158, 30),
+    W("白9.2分", 235, 438, 57, 17),
+    W("克里斯•帕拉特 丽贝卡•弗格森 科幻悬疑", 233, 468, 277, 19),
+    W("星爵卷入惊天冤案战AI", 235, 494, 156, 17),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(
+    pairs.map((p) => [p.title, p.score]),
+    [["极限审判", "9.2"]],
+  );
 });
 
 test("detectPage: detail page (简介〉 + rating) is detailPage (13:55 session step 19)", () => {
