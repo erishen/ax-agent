@@ -124,6 +124,26 @@ export function stripMarkdownSyntax(s: string): string {
     .replace(/[ \t]+\n/g, "\n");
 }
 
+/** Mask credentials / PII that may appear in a transcript before it is
+ * written to the session log or copied: OpenAI-style sk- tokens, AWS access
+ * key ids, key=value assignments (api_key/token/secret/password/…), email
+ * addresses (domain kept) and mainland-China mobile numbers (head/tail kept).
+ * Tool-step code blocks are NOT redacted — the log keeps them verbatim for
+ * auditability; only user text and assistant prose pass through here.
+ * Conservative by design: no semantic PII detection, only well-formed
+ * patterns with word boundaries, so ordinary text is never mangled. */
+export function redactSensitive(text: string): string {
+  return text
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}/g, "sk-***")
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "AKIA***")
+    .replace(
+      /\b(api[_-]?key|token|secret|password|passwd|authorization)\b\s*[=:]\s*("?)([A-Za-z0-9_\-./+=]{8,})\2/gi,
+      "$1=***",
+    )
+    .replace(/\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, "***@$2")
+    .replace(/\b(1[3-9]\d)(\d{4})(\d{4})\b/g, "$1****$3");
+}
+
 /** Render the whole session as plain text — for the 📋 copy button and the log. */
 export function sessionTranscript(s: SessionState): string {
   const lines: string[] = [];
@@ -138,7 +158,15 @@ export function sessionTranscript(s: SessionState): string {
     // Tool-step cards keep their fenced code block verbatim; prose
     // messages lose the Markdown markers that would render as literal
     // syntax in a pasted transcript.
-    const text = m.role === "assistant" && !STEP_RE.test(m.text) ? stripMarkdownSyntax(m.text) : m.text;
+    // Tool-step cards keep their fenced code block verbatim; prose messages
+    // lose the Markdown markers. All non-step text is redacted (credentials /
+    // PII) before it reaches the log or the copy button.
+    const text =
+      m.role === "assistant" && !STEP_RE.test(m.text)
+        ? redactSensitive(stripMarkdownSyntax(m.text))
+        : m.role === "user"
+          ? redactSensitive(m.text)
+          : m.text;
     lines.push(text);
     lines.push("");
   }

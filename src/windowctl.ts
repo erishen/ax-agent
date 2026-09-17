@@ -193,12 +193,33 @@ export async function hideAside(targetPid?: number): Promise<void> {
         { x: r.x + r.w - W - 12, y: r.y + r.h - H - 12 },
         { x: r.x + 12, y: r.y + r.h - H - 12 },
       ];
-      const free = corners.find((c) => !t || c.x + W <= t.x || c.x >= t.x + t.w || c.y + H <= t.y || c.y >= t.y + t.h);
-      await win.setPosition(new LogicalPosition(free?.x ?? r.x + r.w - W - 12, free?.y ?? r.y + 12));
+      const free = pickCorner(corners, t, W, H);
+      await win.setPosition(new LogicalPosition(free.x, free.y));
     }
   } catch {
     /* window API unavailable (tests) — drive mode is best-effort */
   }
+}
+
+/** Pick the first corner that the target window frame does not cover.
+ * `target` is in the same logical coordinate space as `corners`. Exported
+ * pure logic so the parking decision is unit-testable. */
+export function pickCorner(
+  corners: Array<{ x: number; y: number }>,
+  target: { x: number; y: number; w: number; h: number } | null,
+  W: number,
+  H: number,
+): { x: number; y: number } {
+  return (
+    corners.find(
+      (c) =>
+        !target ||
+        c.x + W <= target.x ||
+        c.x >= target.x + target.w ||
+        c.y + H <= target.y ||
+        c.y >= target.y + target.h,
+    ) ?? corners[0]
+  );
 }
 
 /** Restore the window after an agent task: original frame + back to front. */

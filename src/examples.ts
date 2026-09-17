@@ -65,7 +65,7 @@ const ZH_ALIASES: Record<string, string> = {
 };
 
 /** Task text for an app: localized alias when the scan returned English. */
-function appDisplayName(a: InstalledApp): string {
+export function appDisplayName(a: InstalledApp): string {
   const alias = ZH_ALIASES[a.bundle_name.toLowerCase()];
   // Prefer the scan's own localized name; alias only when it looks English
   // (pure ASCII) and we have a known Chinese name.
@@ -272,7 +272,7 @@ const APP_TASK_TEMPLATES: Array<(app: string) => ExampleTask> = [
 // Gateway catalog tasks (skills / tools / mcps)
 // ---------------------------------------------------------------------------
 
-function skillTasks(skills: HubCapability[]): ExampleTask[] {
+export function skillTasks(skills: HubCapability[]): ExampleTask[] {
   return skills.slice(0, 12).map((s) => ({
     label: `🧩 技能：${s.name}`,
     task:
@@ -283,7 +283,7 @@ function skillTasks(skills: HubCapability[]): ExampleTask[] {
   }));
 }
 
-function toolTasks(tools: HubCapability[]): ExampleTask[] {
+export function toolTasks(tools: HubCapability[]): ExampleTask[] {
   return tools.slice(0, 12).map((t) => ({
     label: `🛠 工具：${t.name}`,
     task:
@@ -293,7 +293,7 @@ function toolTasks(tools: HubCapability[]): ExampleTask[] {
   }));
 }
 
-function mcpTasks(mcps: HubCapability[]): ExampleTask[] {
+export function mcpTasks(mcps: HubCapability[]): ExampleTask[] {
   return mcps.slice(0, 12).map((m) => ({
     label: `🔌 MCP：${m.name}`,
     task:
@@ -323,7 +323,7 @@ const EMPTY_LOCAL: LocalAppsConfig = {
 };
 
 /** Case-insensitive membership test against a bundle/localized name. */
-function matchesName(list: string[], a: InstalledApp): boolean {
+export function matchesName(list: string[], a: InstalledApp): boolean {
   const n = (s: string) => s.trim().toLowerCase();
   return list.some((h) => {
     const v = n(h);
