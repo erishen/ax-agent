@@ -24,10 +24,21 @@ dev: ## 启动桌面应用（只清理本项目的残留进程与 1520 端口，
 build: ## 构建 release 安装包（.app / .dmg）
 	pnpm run tauri build
 
-install: ## 安装已构建的 .app 到 /Applications（选项: make install INSTALL_FLAGS="-y"）
+install: ## 安装已构建的 .app 到 /Applications（先停止运行中的实例；选项: make install INSTALL_FLAGS="-y"）
+	@echo "[install] 停止运行中的 ax-agent 实例..."
+	@pkill -f '/Applications/AX Agent.app/Contents/MacOS/ax-agent' 2>/dev/null || true
+	@pkill -f 'target/release/ax-agent' 2>/dev/null || true
+	@pkill -f 'target/debug/ax-agent' 2>/dev/null || true
+	@# 等进程完全退出，避免覆盖时文件句柄占用
+	@sleep 1
 	bash scripts/install.sh $(INSTALL_FLAGS)
 
-install-build: build ## 构建并安装（安装前先跑 release 构建）
+install-build: build ## 构建并安装（构建前先停实例，安装前再停一次兜底）
+	@echo "[install-build] 停止运行中的 ax-agent 实例..."
+	@pkill -f '/Applications/AX Agent.app/Contents/MacOS/ax-agent' 2>/dev/null || true
+	@pkill -f 'target/release/ax-agent' 2>/dev/null || true
+	@pkill -f 'target/debug/ax-agent' 2>/dev/null || true
+	@sleep 1
 	bash scripts/install.sh $(INSTALL_FLAGS)
 
 uninstall: ## 从 /Applications 卸载（默认保留数据；--purge 连数据一起删）

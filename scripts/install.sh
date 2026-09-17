@@ -88,6 +88,30 @@ if [ "$NEED_CONFIRM" = 1 ] && [ "$YES" != 1 ]; then
 fi
 
 echo
+echo "== 运行实例检查 =="
+# 检测已安装（或正在运行）的实例；覆盖前必须停止，否则旧进程可能占住文件句柄
+RUNNING_PIDS="$(pgrep -f 'AX Agent.app/Contents/MacOS/ax-agent' || true)"
+if [ -n "$RUNNING_PIDS" ]; then
+  echo "  检测到运行中的实例 (pid: $RUNNING_PIDS)"
+  if [ "$YES" = 1 ] || [ "$FORCE" = 1 ]; then
+    echo "  -y/-f：自动停止..."
+    kill $RUNNING_PIDS 2>/dev/null || true
+    sleep 1
+  else
+    printf "  停止后继续安装？[y/N] "
+    read -r ans || true
+    case "$ans" in y|Y|yes|YES)
+      kill $RUNNING_PIDS 2>/dev/null || true
+      sleep 1
+      ;;
+    *) echo "  已取消（未停止运行中的实例）。"; exit 1 ;;
+    esac
+  fi
+else
+  echo "  无运行中的实例 ✓"
+fi
+
+echo
 echo "== 安装步骤 =="
 echo "  1. 复制 $APP_NAME → $PREFIX/"
 
