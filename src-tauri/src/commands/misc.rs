@@ -86,7 +86,18 @@ fn memory_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .app_data_dir()
         .map_err(|e| format!("获取 app_data_dir 失败: {e}"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    Ok(dir.join("memory.json"))
+    let path = dir.join("memory.json");
+    // memory.json records app-usage habits (personal data): fix permissions
+    // on the READ path too, so files written by older builds (0644) are
+    // repaired on the next load rather than only on the next save.
+    if path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    Ok(path)
 }
 
 fn load_memory(path: &std::path::Path) -> MemoryFile {

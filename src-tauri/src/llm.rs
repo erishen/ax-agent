@@ -61,7 +61,18 @@ fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .app_data_dir()
         .map_err(|e| format!("获取 app_data_dir 失败: {e}"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    Ok(dir.join("llm.json"))
+    let path = dir.join("llm.json");
+    // llm.json holds the plaintext API key. Fix permissions on the READ path
+    // too: files written by older builds (0644) are only repaired on save,
+    // so a legacy file stays world-readable until the user re-saves.
+    if path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    Ok(path)
 }
 
 /// Load LLM config. Precedence: saved settings (app_data_dir/llm.json from
