@@ -296,7 +296,11 @@ fn is_settable(element: &AXUIElement, attribute: &str) -> Option<bool> {
 ///
 /// Password fields must never receive synthetic input (dsh-computer-use
 /// parity: cua-driver refuses AXSecureTextField / AXPasswordField).
-fn is_secure_role(role: &str) -> bool {
+///
+/// Shared with `ax_core::walk` / `walk_export`: the tree read side also
+/// refuses these roles' `AXValue` so password fields never leak into the
+/// exported tree / LLM payload, even if macOS exposes the value.
+pub(crate) fn is_secure_role(role: &str) -> bool {
     role == "AXSecureTextField" || role == "AXPasswordField"
 }
 

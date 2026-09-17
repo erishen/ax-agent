@@ -660,6 +660,15 @@ pub(crate) fn copy_action_names(element: &AXUIElement) -> Vec<String> {
 // Tree walking
 // ---------------------------------------------------------------------------
 
+/// Whether a display attribute of a secure-field element must be withheld.
+/// Secure fields (password boxes) never leak their `AXValue` into the tree
+/// (which is sent to the LLM / JSON export / session log); every other
+/// attribute (title, help, placeholder, geometry) is kept so the element can
+/// still be located and described.
+fn should_skip_secure_value(role: &str, attr_name: &str) -> bool {
+    crate::ax_act::is_secure_role(role) && attr_name == "AXValue"
+}
+
 /// Recursively walk the AX tree, bounded by `max_depth`.
 fn walk(element: &AXUIElement, depth: usize, max_depth: usize) -> AxNode {
     // One batched IPC round-trip for every attribute the tree shows (was 14
@@ -682,6 +691,9 @@ fn walk(element: &AXUIElement, depth: usize, max_depth: usize) -> AxNode {
     // Read the remaining display attributes from the same batch.
     let mut attributes: Vec<AxAttr> = Vec::new();
     for (i, name) in DISPLAY_ATTRIBUTES.iter().enumerate() {
+        if should_skip_secure_value(&role, name) {
+            continue;
+        }
         if let Some(Some(value)) = values.get(BATCH_DISPLAY_START + i) {
             if let Some(rendered) = cftype_to_string(value) {
                 if !rendered.is_empty() {
@@ -783,7 +795,13 @@ fn parse_geometry(text: &str) -> Option<(f64, f64)> {
 /// Recursively build a machine-friendly tree with child-index paths.
 fn walk_export(element: &AXUIElement, depth: usize, max_depth: usize, path: Vec<u32>) -> ExportNode {
     let role = copy_string_attribute(element, "AXRole").unwrap_or_default();
-    let value = copy_string_attribute(element, "AXValue");
+    // Never export the value of password/secure fields (same guarantee as
+    // walk(): the export goes to the LLM / JSON / session log).
+    let value = if should_skip_secure_value(&role, "AXValue") {
+        None
+    } else {
+        copy_string_attribute(element, "AXValue")
+    };
     // Reuse the same label rule as the display tree.
     let label = copy_string_attribute(element, "AXTitle")
         .or_else(|| copy_string_attribute(element, "AXDescription"))
@@ -993,5 +1011,34 @@ mod relocate_hint_tests {
         let found = search_by_hint(&tree, &mut path, "AXButton", "OK");
         // First depth-first match: window 0 → button 0.
         assert_eq!(found, Some(vec![0, 0]));
+    }
+}
+
+#[cfg(test)]
+mod secure_value_tests {
+    use super::should_skip_secure_value;
+
+    #[test]
+    fn secure_field_values_are_withheld() {
+        assert!(should_skip_secure_value("AXPasswordField", "AXValue"));
+        assert!(should_skip_secure_value("AXSecureTextField", "AXValue"));
+    }
+
+    #[test]
+    fn non_secure_roles_keep_their_value() {
+        assert!(!should_skip_secure_value("AXTextField", "AXValue"));
+        assert!(!should_skip_secure_value("AXTextArea", "AXValue"));
+        assert!(!should_skip_secure_value("", "AXValue"));
+        assert!(!should_skip_secure_value("AXStaticText", "AXValue"));
+    }
+
+    #[test]
+    fn secure_fields_keep_other_attributes() {
+        // Title / help / geometry stay visible so the element can still be
+        // located and described — only the value is withheld.
+        assert!(!should_skip_secure_value("AXPasswordField", "AXTitle"));
+        assert!(!should_skip_secure_value("AXPasswordField", "AXHelp"));
+        assert!(!should_skip_secure_value("AXPasswordField", "AXPosition"));
+        assert!(!should_skip_secure_value("AXSecureTextField", "AXDescription"));
     }
 }
