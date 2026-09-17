@@ -36,7 +36,19 @@ export async function toolClick(state: SessionState, args: Record<string, unknow
   const target = findNodes(state.outline, argStr(args, "keyword"))[0];
   if (!target) return { result: `没有找到「${argStr(args, "keyword")}」，先 read_screen`, state };
   if (!target.actions.length) return { result: `元素「${target.label}」不支持动作`, state };
-  await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
+  try {
+    await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
+  } catch (e) {
+    // Some AX rows advertise AXOpen/AXPress but reject it at execution time
+    // (e.g. Finder sidebar items return -25205). Surface a friendly hint so
+    // the agent re-locates instead of getting an opaque tool failure.
+    return {
+      result:
+        `点击「${target.label}」（${target.actions[0]}）失败：${e instanceof Error ? e.message : String(e)}。` +
+        `元素可能已变化或实际不支持该动作——先 read_screen 刷新大纲重新定位，或改用 click_at 按坐标点击。`,
+      state,
+    };
+  }
   state = await refreshOutline(state);
   return { result: `已点击「${target.label}」（${target.actions[0]}）。界面大纲已自动更新，无需重复 read_screen。`, state };
 }
