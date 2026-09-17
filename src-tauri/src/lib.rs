@@ -145,13 +145,18 @@ pub fn run() {
             // task (screenshots/OCR and synthetic keys fail without them).
             std::thread::spawn(|| {
                 let preflight = commands::permission_overview();
-                if preflight.accessibility {
-                    if !preflight.screen_recording {
-                        let _ = commands::request_screen_recording_gate();
-                    }
-                    if !preflight.input_monitoring {
-                        let _ = commands::request_input_monitoring_gate();
-                    }
+                if !preflight.accessibility {
+                    // 首次运行（或重装后新签名）：主动触发系统辅助功能授权
+                    // 弹窗（带 prompt）。否则所有 AX 工具会静默报
+                    // "未授予辅助功能权限"，用户没有任何引导。
+                    let _ = ax_core::is_process_trusted(true);
+                    return;
+                }
+                if !preflight.screen_recording {
+                    let _ = commands::request_screen_recording_gate();
+                }
+                if !preflight.input_monitoring {
+                    let _ = commands::request_input_monitoring_gate();
                 }
             });
             Ok(())
