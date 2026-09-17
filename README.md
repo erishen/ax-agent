@@ -221,6 +221,18 @@ pnpm tauri dev      # dev mode
 pnpm tauri build    # produces .app / .dmg (dock icon generated from app-icon.svg)
 ```
 
+Install the built app to `/Applications` (or use `make help` for the full list):
+
+```bash
+make build                      # release build (.app / .dmg)
+make install                    # install the built .app to /Applications
+make install INSTALL_FLAGS="-y" # skip the overwrite prompt
+make uninstall                  # remove the app (data kept; --purge deletes it too)
+```
+
+The install script handles version comparison, codesign verification and
+sudo elevation; `--dry-run` prints the plan without touching anything.
+
 ### Before committing
 
 - Full verification: `make lint` (tsc + `clippy --all-targets -D warnings`),

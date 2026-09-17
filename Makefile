@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help dev build check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health
+.PHONY: help dev build install install-build uninstall check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health
 
 help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -23,6 +23,15 @@ dev: ## 启动桌面应用（只清理本项目的残留进程与 1520 端口，
 
 build: ## 构建 release 安装包（.app / .dmg）
 	pnpm run tauri build
+
+install: ## 安装已构建的 .app 到 /Applications（选项: make install INSTALL_FLAGS="-y"）
+	bash scripts/install.sh $(INSTALL_FLAGS)
+
+install-build: build ## 构建并安装（安装前先跑 release 构建）
+	bash scripts/install.sh $(INSTALL_FLAGS)
+
+uninstall: ## 从 /Applications 卸载（默认保留数据；--purge 连数据一起删）
+	bash scripts/uninstall.sh $(INSTALL_FLAGS)
 
 fe-install: ## 安装前端依赖
 	pnpm install
