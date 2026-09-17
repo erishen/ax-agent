@@ -353,6 +353,12 @@ export function buildPairs(
           TITLE_CHARS.test(t.text) &&
           !NAV_RE.test(t.text) &&
           !/月\d+日|定档|上映|巨制|打爆/.test(t.text) &&
+          // Popularity badges (三在追破200万 / 预约破200万 / 实时热度超3万 /
+          // 讨论破100万) are heat counters, not film titles — clicking one
+          // does nothing and the model burns steps re-clicking it
+          // (17:57 session: 「三在追破200万」 was paired with a 9.7 and the
+          // click at its coords got no response).
+          !/在追破|预约破|实时热度|热度超|讨论破|播放量|弹幕/.test(t.text) &&
           // Actor/genre rows read as "雷佳音 张国立 警匪打黑" —
           // space-separated multi-word lines are cast + genre, not a film
           // title (14:05 session: it was paired with a 9.4 rating that

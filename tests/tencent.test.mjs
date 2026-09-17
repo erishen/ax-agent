@@ -157,6 +157,30 @@ test("buildPairs: 高分-list layout B (badge top-right, dx≈260, dy<0) pairs (
   );
 });
 
+test("buildPairs: popularity badge (三在追破200万) is NOT a title even at dx<300 (17:57 session step 17)", () => {
+  // The badge sits right above its rating (dy<0, dx≈120) — layout B pairs
+  // it as the "title", the model clicked its coords and got no response,
+  // then a near-by click was guard-blocked and the session stalled.
+  const words = [
+    W("三在追破200万", 290, 445, 108, 20),
+    W("白9.7分", 290, 472, 56, 17),
+    W("沈腾 尹正 体育竞技", 288, 500, 137, 20),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(pairs, []);
+});
+
+test("buildPairs: 预约破200万 / 实时热度超3万 badges are NOT titles", () => {
+  const words = [
+    W("预约破200万", 2303, 456, 74, 22),
+    W("9.2", 2320, 488, 58, 18),
+    W("实时热度超3万", 1948, 655, 368, 17),
+    W("9.3", 2010, 690, 57, 17),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(pairs, []);
+});
+
 test("detectPage: detail page (简介〉 + rating) is detailPage (13:55 session step 19)", () => {
   const words = [
     W("捕风追影 普通话•简介〉", 3050, 189, 177, 22),
