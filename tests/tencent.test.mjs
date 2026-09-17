@@ -553,3 +553,48 @@ test("detectPage: scrolled NAV home (content 榜卡) stays NOT channelHome while
   const f = detectPage(joinedOf(words));
   assert.equal(f.channelHome, false);
 });
+
+test("detectPage: hero WITHOUT rating badge (立即播放 + full left nav, no filter band) is channelHome (19:39 关东岭 frame)", () => {
+  // The carousel frame showed only poster+tagline (no 9.x分), so the old
+  // heroChannelHome (requires a rating) missed it; detectPage returned no
+  // flags, the bottom strip row 环球高能 9.7 @(2641,958) got paired, and
+  // the strip click was let through as an onTitle hit — a direct play.
+  const words = [
+    W("电视剧", 1782, 318, 47, 20),
+    W("电影", 1784, 360, 31, 18),
+    W("综艺", 1753, 398, 63, 22),
+    W("动漫", 1782, 443, 36, 18),
+    W("关东岭", 1937, 423, 168, 70),
+    W("立即播放", 1989, 602, 79, 22),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, true);
+  assert.equal(f.listPage, false);
+});
+
+test("detectPage: hero frame WITHOUT 立即播放 and WITHOUT rating is NOT channelHome (no hero signal)", () => {
+  const words = [
+    W("电视剧", 1782, 318, 47, 20),
+    W("电影", 1784, 360, 31, 18),
+    W("综艺", 1753, 398, 63, 22),
+    W("动漫", 1782, 443, 36, 18),
+    W("关东岭", 1937, 423, 168, 70),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, false);
+});
+
+test("detectPage: list page with filter band stays listPage even with 立即播放 + nav (heroNoRating exclusion)", () => {
+  const words = [
+    W("电视剧", 1782, 318, 47, 20),
+    W("电影", 1784, 360, 31, 18),
+    W("综艺", 1753, 398, 63, 22),
+    W("动漫", 1782, 443, 36, 18),
+    W("高分", 345, 125, 35, 20),
+    W("洛杉矶劫案", 1963, 425, 152, 47),
+    W("立即播放", 1989, 602, 79, 22),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, false);
+  assert.equal(f.listPage, true);
+});

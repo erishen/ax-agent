@@ -126,6 +126,23 @@ test("guard: channel-home click (hero carousel, no detail markers) → HARD BLOC
   assert.match(r.blocked ?? "", /向下滚动进入列表页/);
 });
 
+test("guard: channel-home strip-row click WITH pairs (onTitle hit) → HARD BLOCK (19:39 session)", () => {
+  // 19:39: the 关东岭 hero frame carried no rating, detectPage returned no
+  // flags, and the bottom strip row 环球高能 9.7 @(2641,958) got paired.
+  // The strip click then matched onTitle and was let through — a direct
+  // play. The channel-home block must fire BEFORE the pairs branches, so
+  // even an onTitle hit on the channel home is refused.
+  const r = buildClickGuard({
+    ...base,
+    x: 2641,
+    y: 958,
+    pairs: [pair("环球高能•硬核科幻大片", "9.7", 2641, 958)],
+    lastOcrChannelHome: true,
+  });
+  assert.ok(r.blocked, "must be blocked even when the click hits a paired title");
+  assert.match(r.blocked ?? "", /⛔ 当前是频道首页/);
+});
+
 test("guard: top strip click (y<150, x≥400) → hot-list warning (16:43 session)", () => {
   const r = buildClickGuard({
     ...base,

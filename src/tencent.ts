@@ -123,9 +123,26 @@ export function detectPage(joined: string): PageFlags {
     /\d+\.\d\s*分/.test(j) &&
     /立即播放/.test(j) &&
     !/高分|最热|最新|推荐|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(j);
+  // Channel-home hero WITHOUT a visible rating badge: the carousel frame
+  // can show only the poster/tagline (19:39 session: the 关东岭 frame had
+  // no 9.x分, so detectPage returned no page flags; the bottom strip row
+  // 环球高能 9.7 @(2641,958) got paired, and the model's strip click was
+  // let through as an onTitle hit — a direct play without detail review).
+  // 立即播放 + complete left nav + no filter/play/detail markers ⇒ it is
+  // the hero card zone of a channel or the nav home. Classifying the nav
+  // home as channelHome is harmless: clicking any card there is equally
+  // wrong, and the nav entries still pass via onNav.
+  const navComplete =
+    /电影/.test(j) && /电视剧/.test(j) && /综艺/.test(j) && /动漫/.test(j);
+  const heroNoRating =
+    /立即播放/.test(j) &&
+    navComplete &&
+    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放|高分|推荐|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(
+      j,
+    );
   const channelHome =
     !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放/.test(j) &&
-    (hotWordsY.some((y) => y >= 250) || heroChannelHome);
+    (hotWordsY.some((y) => y >= 250) || heroChannelHome || heroNoRating);
   // Account / personal-center page: the top banner carries the user's
   // account info (账号设置 / 我的主页 / 积分 / 钻石). Its left nav has no
   // channel entries — classify it separately so the model isn't told to
@@ -233,6 +250,25 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
       setSortVerify: false,
     };
   }
+  if (opts.lastOcrChannelHome && !opts.lastOcrDetail && !opts.lastOcrPlayer) {
+    // Channel-home hero cards AUTO-ROTATE and play directly on click —
+    // warn is not enough (20:08 session: the model ignored the warn and
+    // clicked 立即播放 on the hero card 3×; the first fired and the rest
+    // were only stopped by the duplicate-click detector). This must also
+    // fire when the frame HAS pairs — the 19:39 session's clicks on the
+    // strip rows (2700,622) ×2 and (2903,624) all sailed through because
+    // the block sat inside the !pairs.length branch and the clicked spot
+    // was >180px from every paired title. Every non-nav click on the
+    // channel home is refused; the correct move is scrolling into the
+    // list page.
+    return {
+      blocked:
+        `⛔ 当前是频道首页（热播榜大卡，自动轮播）：${verb} (${x}, ${y}) 落在 hero 大卡区，点大卡/横排卡或「立即播放」会【直接播放】未经详情页复核的片（评分徽标和轮播都不可信——大卡会自己换片）。` +
+        "正确路径：向下滚动进入列表页（出现「最热/高分好评/最新」筛选栏），在列表页按配对坐标点片名进详情页，复核评分与题材后再点播放。",
+      note: "",
+      setSortVerify: false,
+    };
+  }
   if (!pairs.length) {
     if (opts.lastOcrList && y <= 280 && x >= 330) {
       // No rating pairs on screen (rating-less list): a click in the top
@@ -246,16 +282,11 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
       };
     }
     if (opts.lastOcrChannelHome && !opts.lastOcrDetail && !opts.lastOcrPlayer) {
-      // Channel-home hero cards AUTO-ROTATE and play directly on click —
-      // warn is not enough (20:08 session: the model ignored the warn and
-      // clicked 立即播放 on the hero card 3×; the first fired and the rest
-      // were only stopped by the duplicate-click detector). The correct
-      // channel-home move is scrolling into the list page, so refuse every
-      // non-nav click here.
+      // Sort tabs do not exist on the channel home — kept as a guard rail
+      // in case the earlier channel-home block ever gets relaxed.
       return {
         blocked:
-          `⛔ 当前是频道首页（热播榜大卡，自动轮播）：${verb} (${x}, ${y}) 落在 hero 大卡区，点大卡或「立即播放」会【直接播放】未经详情页复核的片（评分徽标和轮播都不可信——大卡会自己换片）。` +
-          "正确路径：向下滚动进入列表页（出现「最热/高分好评/最新」筛选栏），在列表页按配对坐标点片名进详情页，复核评分与题材后再点播放。",
+          `⛔ 当前是频道首页（热播榜大卡，自动轮播）：${verb} (${x}, ${y}) 落在 hero 大卡区，点大卡或「立即播放」会【直接播放】未经详情页复核的片。正确路径：向下滚动进入列表页后再按配对坐标操作。`,
         note: "",
         setSortVerify: false,
       };
