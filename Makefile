@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help dev build install install-build uninstall check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health
+.PHONY: help dev build install install-build uninstall verify check clean clean-macros fe-install fe-build audit typecheck lint fmt clippy release rpc rpc-ping rpc-health
 
 help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -70,6 +70,17 @@ lint: ## 代码检查（TypeScript 类型 + Rust clippy）
 	pnpm exec tsc --noEmit
 	@echo "=== Rust clippy ==="
 	cd src-tauri && RUSTC_WRAPPER= cargo clippy -p ax-agent --all-targets -- -D warnings
+
+verify: ## 全量验证（前端测试 → 类型检查 → clippy → Rust 测试，任一步失败即停）
+	@echo "=== [1/4] 前端单元测试 ==="
+	npm test
+	@echo "=== [2/4] TypeScript 类型检查 ==="
+	pnpm exec tsc --noEmit
+	@echo "=== [3/4] Rust clippy（-D warnings）==="
+	cd src-tauri && RUSTC_WRAPPER= cargo clippy -p ax-agent --all-targets -- -D warnings
+	@echo "=== [4/4] Rust 单元测试 ==="
+	cd src-tauri && RUSTC_WRAPPER= cargo test -p ax-agent --lib
+	@echo "✅ 全量验证通过"
 
 clean-macros: ## 删除共享 target 中宏库 .dylib（解决 mismatched ABI，cargo 会自动重编）
 	@echo "删除共享 target 中所有宏库 .dylib 文件..."
