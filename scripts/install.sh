@@ -72,12 +72,11 @@ echo "  版本:      $NEW_VER"
 echo "  目标:      $DST"
 if [ "$INSTALLED" = 1 ]; then echo "  已装版本:  $OLD_VER"; else echo "  已装版本:  （未安装）"; fi
 
-# 版本对比：需要覆盖吗？
+# 版本对比：仅当"已装版本更高（降级覆盖）"时询问，防止开发构建覆盖正式发布版。
+# 同版本视为开发重装（每次 build 后重装验证版本不变），直接覆盖，不再交互。
 NEED_CONFIRM=0
 if [ "$INSTALLED" = 1 ] && [ "$FORCE" != 1 ]; then
-  if [ "$(printf '%s\n%s\n' "$NEW_VER" "$OLD_VER" | sort -V | tail -1)" = "$NEW_VER" ] && [ "$NEW_VER" != "$OLD_VER" ]; then
-    : # 新版本更新，直接装
-  else
+  if [ "$NEW_VER" != "$OLD_VER" ] && [ "$(printf '%s\n%s\n' "$NEW_VER" "$OLD_VER" | sort -V | tail -1)" = "$OLD_VER" ]; then
     NEED_CONFIRM=1
   fi
 fi
