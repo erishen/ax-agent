@@ -9,9 +9,15 @@ import {
   observeWait,
   ocrWindow,
 } from "../api.ts";
-import type { OcrScreenWord } from "../types.ts";
+import type { OcrScreenWord, OutlineNode, SessionState } from "../types.ts";
 import { findNodes, findNodesAny, renderOutline } from "../tree-utils.ts";
-import { NAV_WORDS, garbledOcrNote, navWordNote, resolveAppMatch } from "../tool-utils.ts";
+import {
+  NAV_WORDS,
+  asText,
+  garbledOcrNote,
+  navWordNote,
+  resolveAppMatch,
+} from "../tool-utils.ts";
 import {
   argStr,
   markObserved,
@@ -23,7 +29,6 @@ import {
   uiKind,
   type ToolResult,
 } from "./shared.ts";
-import type { SessionState } from "../types.ts";
 
 export async function toolListApps(state: SessionState, _args: Record<string, unknown>): Promise<ToolResult> {
   const apps = await listApps();
@@ -47,7 +52,21 @@ export async function toolReadScreen(state: SessionState, args: Record<string, u
     name = hit.name;
   }
   if (pid === null) return { result: "尚未选择应用，先用 open_app 打开一个", state };
-  const outline = await treeOf(pid, 10);
+  let outline: OutlineNode[];
+  try {
+    outline = await treeOf(pid, 10);
+  } catch (e) {
+    // read_screen must never kill the task: a transient tree failure (app
+    // still launching, window minimized / on another Space, IPC hiccup)
+    // becomes a recoverable hint so the model can open_app / wait_for and
+    // retry instead of the whole run aborting.
+    return {
+      result:
+        `⚠️ 读取界面失败：${asText(e)}\n` +
+        "恢复建议：应用窗口可能未就绪/最小化/在其它 Space——先 open_app 重新激活它，或 wait_for 等窗口出现后再重试。",
+      state,
+    };
+  }
   state = { ...state, pid, appName: name, outline };
   const shown = filter
     ? findNodesAny(outline, filter.split(/[,，\s]+/).filter(Boolean))
@@ -193,7 +212,20 @@ export async function toolOcr(state: SessionState, args: Record<string, unknown>
     }
   }
   if (pid === null) return { result: "尚未选择应用，先用 open_app 打开一个", state };
-  const words = await ocrWindow(pid);
+  let words: OcrScreenWord[];
+  try {
+    words = await ocrWindow(pid);
+  } catch (e) {
+    // Same contract as read_screen: a "window not found" failure (target
+    // still launching, minimized, hidden on another Space) must not abort
+    // the whole run — give the model the recovery move instead.
+    return {
+      result:
+        `⚠️ OCR 失败：${asText(e)}\n` +
+        "恢复建议：应用窗口可能未就绪/最小化/在其它 Space/已关闭——先 open_app 重新激活它，或 wait_for 等窗口出现后再重试。",
+      state,
+    };
+  }
   state = markObserved({ ...state, pid, appName: name });
   if (!words.length) return { result: `${name} 窗口 OCR 未识别到文字（也许是纯图像界面）`, state };
   // The whole Tencent-Video OCR decision (page classification, rating

@@ -654,6 +654,7 @@ async function runSteps(
         } catch {
           /* treat as empty args */
         }
+        try {
         const argsSig = (call.function.arguments || "{}").replace(/\s+/g, " ");
         const sig = OBSERVE_TOOLS.has(call.function.name)
           ? ""
@@ -760,6 +761,30 @@ async function runSteps(
             state: commit({ ...finalState, pending: null, llmHistory }),
             ended: "prose",
           };
+        }
+        } catch (e) {
+          // Last-resort per-step guard: a malformed model output or a stray
+          // backend error must degrade to a "keep going" hint fed back to the
+          // model instead of aborting the whole run (16:14 session: one OCR
+          // "window not found" failure surfaced as 智能模式执行出错 and killed
+          // the whole Tencent Video task).
+          const seq = `${seqBase + steps + 1}/${budget}`;
+          const name = call?.function?.name ?? "tool";
+          const heading = stepHeading(seq, name, {});
+          const stepId = nextId++;
+          const errText =
+            `⚠️ 该步执行异常（任务继续）：${asText(e)}\n` +
+            "请先确认界面现状（ocr / read_screen），再换一种方式推进；若确实无法继续，用 done 汇报现状。";
+          working = commit({
+            ...working,
+            messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, errText) }],
+          });
+          llmHistory.push({
+            role: "tool",
+            tool_call_id: call?.id ?? `call_${stepId}`,
+            name,
+            content: errText,
+          });
         }
       }
       continue;
@@ -1004,10 +1029,14 @@ export async function handleUtterance(
     // the old fallback produced the misleading "配置 LLM 后重新发送" hint
     // even though the model was configured (reproduced 09-17: '打开 计算器'
     // went offline right after 'hi' had used the LLM successfully).
-    return reply(
+    // Persist the failed session too — 16:14 Tencent Video task died here
+    // without any log entry, so the failure could not be audited.
+    const next = reply(
       withUser,
       `⚠️ 智能模式执行出错（已配置 LLM，不会降级到离线快捷指令）：${asText(e)}\n可回复「继续」重试，或检查 ⚙️ LLM 设置后重发。`,
     );
+    void logSession(next);
+    return next;
   }
 
   switch (cmd?.kind) {
