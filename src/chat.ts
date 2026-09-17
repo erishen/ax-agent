@@ -1058,9 +1058,17 @@ export async function handleUtterance(
         isRunning = false;
       }
     }
-  } catch {
-    // Unreachable in practice: info was resolved above; keep a safe fallback
-    // to the offline parser for backend edge cases.
+  } catch (e) {
+    // LLM is configured, so the agent path is the only correct route. If it
+    // throws (backend edge case, unexpected bug), surface the real error
+    // instead of silently falling through to the offline command parser —
+    // the old fallback produced the misleading "配置 LLM 后重新发送" hint
+    // even though the model was configured (reproduced 09-17: '打开 计算器'
+    // went offline right after 'hi' had used the LLM successfully).
+    return reply(
+      withUser,
+      `⚠️ 智能模式执行出错（已配置 LLM，不会降级到离线快捷指令）：${asText(e)}\n可回复「继续」重试，或检查 ⚙️ LLM 设置后重发。`,
+    );
   }
 
   switch (cmd?.kind) {
