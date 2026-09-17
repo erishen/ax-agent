@@ -929,6 +929,10 @@ export async function confirmPending(
     const { result, state: next } = await runTool(working, pending.name, pending.args, { confirmed: true });
     working = next;
     llmHistory.push({ role: "tool", tool_call_id: pending.toolCallId, name: pending.name, content: result });
+    // Tool message alone can be rejected by strict gateways ("No user query
+    // found in messages" on failover). Follow with an explicit user turn so
+    // the model knows the user approved and the run continues.
+    llmHistory.push({ role: "user", content: "用户已批准上述操作（确认条点击「✅ 执行」）。请继续完成剩余任务。" });
     working = commit(reply(working, `✅ 已执行你确认的操作：\`${pending.name}\`${argsText(pending.args) ? " " + argsText(pending.args) : ""}`));
   } else {
     llmHistory.push({
@@ -938,6 +942,7 @@ export async function confirmPending(
       content:
         "用户取消了该操作（未执行）。请调整方案去完成剩余目标；后续不要再触发同类不可逆操作，需要时先向用户确认。",
     });
+    llmHistory.push({ role: "user", content: "用户已取消上述操作（确认条点击「取消」）。请基于现有信息调整方案完成剩余任务，不要重复调用被取消的工具。" });
     working = commit(reply(working, `🚫 已取消 \`${pending.name}\`，继续完成其余部分。`));
   }
 
