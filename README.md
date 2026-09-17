@@ -201,7 +201,11 @@ Chips are not hardcoded — generated dynamically for your machine:
 Click **🔄 换一批** to reshuffle; 5-minute cache, rebuilt on entering 🤖 mode.
 
 Personal tasks (e.g. app-specific "pick by my taste" workflows) live in a
-git-ignored local config (`apps.local.json`), never in the codebase.
+git-ignored local config (`apps.local.json`), never in the codebase. At
+runtime it is read from the app-data directory (`~/Library/Application
+Support/cn.erishen.ax-agent/apps.local.json`); a copy kept at the repo root is
+auto-migrated there on first launch, so dev and the installed app share the
+same task pool.
 
 Launch reliability: when the CLI locale resolves to English, `open -a 备忘录` fails
 but `open -b com.apple.Notes` always works — `ax_open_app` resolves Chinese names to

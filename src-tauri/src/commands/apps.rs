@@ -2,6 +2,7 @@
 //! (`apps.local.json`).
 
 use serde::Serialize;
+use tauri::Manager;
 
 use crate::ax_core;
 
@@ -99,31 +100,69 @@ impl From<LocalAppsFile> for LocalAppsConfig {
     }
 }
 
-/// Read `apps.local.json` (project root). Missing/unparsable file → default.
+/// Read `apps.local.json` (per-machine profile: pinned/hidden apps, extra tasks).
+///
+/// Resolution order:
+///   1. `app_data_dir/apps.local.json` — the canonical location, shared by dev
+///      and release builds (release starts from `/` and cannot see project paths).
+///   2. Project root (`CARGO_MANIFEST_DIR/../apps.local.json`, i.e. the repo root)
+///      and CWD-relative paths — legacy dev locations. On first read we migrate
+///      the file into app_data so release builds see the same tasks.
+/// Missing/unparsable file → default config.
 #[tauri::command]
-pub fn ax_local_apps_config() -> LocalAppsConfig {
-    // Dev cwd is src-tauri or the project root; try both, then CARGO_MANIFEST_DIR.
-    let candidates = [
-        std::path::PathBuf::from("apps.local.json"),
-        std::path::PathBuf::from("../apps.local.json"),
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps.local.json"),
-    ];
-    for p in candidates {
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            // apps.local.json holds per-machine profile data (pinned/hidden
-            // apps, extra tasks): keep it owner-only even if the user's
-            // editor created it with default 0644.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+pub fn ax_local_apps_config(app: tauri::AppHandle) -> LocalAppsConfig {
+    // 1) Canonical: app_data. Also the migration target for legacy project files.
+    let data_file = app
+        .path()
+        .app_data_dir()
+        .map(|d| d.join("apps.local.json"))
+        .unwrap_or_default();
+
+    if let Some(cfg) = read_config(&data_file) {
+        return cfg;
+    }
+
+    // 2) Legacy project locations. Note the path arithmetic: CARGO_MANIFEST_DIR
+    // is `<repo>/src-tauri`, so one level up is the repo root. (A previous
+    // `../../` reached the parent of the repo and silently broke release builds.)
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps.local.json");
+    for p in [repo_root, std::path::PathBuf::from("apps.local.json")] {
+        if let Some(cfg) = read_config(&p) {
+            // Migrate into app_data so subsequent reads (dev or release) agree.
+            let _ = std::fs::create_dir_all(data_file.parent().unwrap_or(std::path::Path::new("")));
+            if let Ok(text) = std::fs::read_to_string(&p) {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::write(&data_file, &text);
+                    let _ = std::fs::set_permissions(
+                        &data_file,
+                        std::fs::Permissions::from_mode(0o600),
+                    );
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = std::fs::write(&data_file, &text);
+                }
             }
-            if let Ok(cfg) = serde_json::from_str::<LocalAppsFile>(&text) {
-                return cfg.into();
-            }
+            return cfg;
         }
     }
     LocalAppsConfig::default()
+}
+
+/// Read + parse a config file; also enforce owner-only permissions on it.
+fn read_config(path: &std::path::Path) -> Option<LocalAppsConfig> {
+    let text = std::fs::read_to_string(path).ok()?;
+    // apps.local.json holds per-machine profile data (pinned/hidden apps,
+    // extra tasks): keep it owner-only even if the user's editor created it
+    // with default 0644.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    serde_json::from_str::<LocalAppsFile>(&text).ok().map(Into::into)
 }
 
 #[cfg(test)]

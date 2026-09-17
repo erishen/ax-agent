@@ -1,5 +1,5 @@
 {
-  "$comment": "复制为 apps.local.json（已 gitignore，仅本机生效）。全部字段可选。apps.hidden: 不出现在示例任务里的应用（bundle 名或本地化名，大小写不敏感）；代码内另有内置黑名单（见 src/examples.ts APP_BLOCKLIST，Siri/Stocks/News 等无操作价值应用已固化排除），两者取并集。apps.pinned: 强制优先展示的应用。extra_tasks: 自定义示例任务（label 可省略，默认取任务文本前 12 字；手写任务不受内置黑名单限制，自绘 UI 应用如腾讯视频请在任务里写明用 ocr + click_at 操作）。max_apps: 参与任务生成的应用数量上限。",
+  "$comment": "复制为 apps.local.json（已 gitignore，仅本机生效）。运行时从应用数据目录 ~/Library/Application Support/cn.erishen.ax-agent/apps.local.json 读取；放在项目根的副本首次启动会自动迁移过去（dev 与安装版共用同一份）。全部字段可选。apps.hidden: 不出现在示例任务里的应用（bundle 名或本地化名，大小写不敏感）；代码内另有内置黑名单（见 src/examples.ts APP_BLOCKLIST，Siri/Stocks/News 等无操作价值应用已固化排除），两者取并集。apps.pinned: 强制优先展示的应用。extra_tasks: 自定义示例任务（label 可省略，默认取任务文本前 12 字；手写任务不受内置黑名单限制，自绘 UI 应用如腾讯视频请在任务里写明用 ocr + click_at 操作）。max_apps: 参与任务生成的应用数量上限。",
   "apps": {
     "hidden": ["Activity Monitor", "Siri", "Stocks", "Tips", "News"],
     "pinned": ["WeChat", "备忘录", "印象笔记"]
