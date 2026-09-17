@@ -1,5 +1,5 @@
 /** Attribute row attached to a tree node (serialized from Rust `AxAttr`). */
-import type { LlmMessage } from "./llm";
+import type { LlmMessage } from "./llm.ts";
 
 export interface AxAttr {
   name: string;

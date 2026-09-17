@@ -29,7 +29,7 @@ import {
   setPosition,
   setValue,
   tracePath,
-} from "./api";
+} from "./api.ts";
 import {
   findNodes,
   renderOutline,
@@ -44,7 +44,7 @@ import {
   stepHeading,
   withStepResult,
 } from "./tool-utils.ts";
-import type { AxAppInfo, OutlineNode, SessionState } from "./types";
+import type { AxAppInfo, OutlineNode, SessionState } from "./types.ts";
 import {
   CONTINUE_NUDGE,
   MAX_AGENT_STEPS,
@@ -53,16 +53,16 @@ import {
   dangerousReason,
   environmentLimitNote,
 } from "./agent-config.ts";
-import { bringBack, focusSelf, hideAside } from "./windowctl";
+import { bringBack, focusSelf, hideAside } from "./windowctl.ts";
 import { invoke } from "@tauri-apps/api/core";
-import { tui, treeOf, type ToolResult } from "./tools/shared";
+import { tui, treeOf, type ToolResult } from "./tools/shared.ts";
 import {
   toolFind,
   toolListApps,
   toolOcr,
   toolReadScreen,
   toolWaitFor,
-} from "./tools/observe";
+} from "./tools/observe.ts";
 import {
   toolClick,
   toolClickAt,
@@ -75,27 +75,27 @@ import {
   toolScrollTo,
   toolTypeKeys,
   toolTypeText,
-} from "./tools/input";
+} from "./tools/input.ts";
 import {
   toolElementAt,
   toolMoveWindow,
   toolNamedAction,
   toolResizeWindow,
-} from "./tools/window";
+} from "./tools/window.ts";
 import {
   toolDesktop,
   toolDone,
   toolMenuBar,
   toolMenuClick,
   toolOpenApp,
-} from "./tools/misc";
+} from "./tools/misc.ts";
 
 export type {
   ChatMessage,
   PendingAction,
   SessionState,
   UndoRecord,
-} from "./types";
+} from "./types.ts";
 
 /** One chat message (assistant = command replies, user = typed input). */
 
@@ -438,8 +438,8 @@ function helpReply(state: SessionState): SessionState {
 // LLM agent mode (🤖): the model plans, we execute tools, it reports back
 // ---------------------------------------------------------------------------
 
-import { agentTools, llmChatStream, llmConfigured, type LlmConfigured, type LlmMessage } from "./llm";
-import { mcpLocalCall, memoryList } from "./api";
+import { agentTools, llmChatStream, llmConfigured, type LlmConfigured, type LlmMessage } from "./llm.ts";
+import { mcpLocalCall, memoryList } from "./api.ts";
 
 /** Monotonic id for assistant tool-step cards (🤖 N/25 bubbles). */
 let nextId = 1;

@@ -8,10 +8,10 @@ import {
   listApps,
   observeWait,
   ocrWindow,
-} from "../api";
-import type { OcrScreenWord } from "../types";
-import { findNodes, findNodesAny, renderOutline } from "../tree-utils";
-import { NAV_WORDS, garbledOcrNote, navWordNote, resolveAppMatch } from "../tool-utils";
+} from "../api.ts";
+import type { OcrScreenWord } from "../types.ts";
+import { findNodes, findNodesAny, renderOutline } from "../tree-utils.ts";
+import { NAV_WORDS, garbledOcrNote, navWordNote, resolveAppMatch } from "../tool-utils.ts";
 import {
   argStr,
   markObserved,
@@ -22,8 +22,8 @@ import {
   treeOf,
   uiKind,
   type ToolResult,
-} from "./shared";
-import type { SessionState } from "../types";
+} from "./shared.ts";
+import type { SessionState } from "../types.ts";
 
 export async function toolListApps(state: SessionState, _args: Record<string, unknown>): Promise<ToolResult> {
   const apps = await listApps();

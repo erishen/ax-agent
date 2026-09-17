@@ -7,11 +7,11 @@
  * tool implementations stay individually testable — same split pattern as
  * src-tauri/src/commands/*.
  */
-import { fetchTree, windowBounds } from "../api";
-import { flatten } from "../tree-utils";
-import type { OutlineNode, SessionState } from "../types";
-import { TencentUiState } from "../tencent-ui";
-import { NeteaseUiState } from "../netease-ui";
+import { fetchTree, windowBounds } from "../api.ts";
+import { flatten } from "../tree-utils.ts";
+import type { OutlineNode, SessionState } from "../types.ts";
+import { TencentUiState } from "../tencent-ui.ts";
+import { NeteaseUiState } from "../netease-ui.ts";
 
 /** Result of executing one tool call: reply text + next session state. */
 export type ToolResult = { result: string; state: SessionState; dangerous?: string };

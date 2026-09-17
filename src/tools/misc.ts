@@ -8,13 +8,13 @@ import {
   menuBar,
   openApp,
   performAction,
-} from "../api";
-import type { AxAppInfo, OutlineNode } from "../types";
-import { renderOutline } from "../tree-utils";
-import { extractAppNameFromLongArg, filterMenu, openAppArgGuard, renderMenu, resolveAppMatch } from "../tool-utils";
-import { argStr, markObserved, nui, refreshOutline, tui, treeOf, uiKind, type ToolResult } from "./shared";
-import { hideAside } from "../windowctl";
-import type { SessionState } from "../types";
+} from "../api.ts";
+import type { AxAppInfo, OutlineNode } from "../types.ts";
+import { renderOutline } from "../tree-utils.ts";
+import { extractAppNameFromLongArg, filterMenu, openAppArgGuard, renderMenu, resolveAppMatch } from "../tool-utils.ts";
+import { argStr, markObserved, nui, refreshOutline, tui, treeOf, uiKind, type ToolResult } from "./shared.ts";
+import { hideAside } from "../windowctl.ts";
+import type { SessionState } from "../types.ts";
 
 export async function toolOpenApp(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
   const target = argStr(args, "app");

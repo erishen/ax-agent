@@ -5,7 +5,7 @@
 // classification and song-pairing rules can be regression-tested without
 // driving a real instance.
 
-import type { OcrScreenWord } from "./types";
+import type { OcrScreenWord } from "./types.ts";
 
 export const NET_NAV_RE =
   /^(推荐|精选|播客|漫游|关注|我的|我喜欢的音乐|最近播放|我的播客|更多|创建的歌单|歌曲|每日推荐|心动模式|私人漫游|私人雷达|相似歌曲|网易云音乐|下载|播放全部|风格推荐|历史日推|喜欢|时长|专辑|标题|#)$/;

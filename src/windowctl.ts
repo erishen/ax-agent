@@ -10,12 +10,12 @@ import {
   currentMonitor,
   primaryMonitor,
   type Monitor,
-  type Window,
 } from "@tauri-apps/api/window";
-import { windowBounds } from "./api";
+import { windowBounds } from "./api.ts";
 
-const win: Window = getCurrentWindow();
-
+// `win` is resolved lazily inside each function (not at module top level):
+// importing this module must not touch `window`, so the module stays
+// importable under node for unit tests and has no import side effects.
 /** Compact size (bottom-right corner is set separately). */
 const COMPACT = { width: 380, height: 500 };
 /** Normal session size (matches tauri.conf.json defaults). */
@@ -23,11 +23,15 @@ const NORMAL = { width: 1080, height: 720 };
 
 /** Pin / unpin the window above every other app's windows. */
 export async function setPinned(on: boolean): Promise<void> {
+  const win = getCurrentWindow();
+
   await win.setAlwaysOnTop(on);
 }
 
 /** Shrink to a compact bottom-right panel; keeps focus so chat stays usable. */
 export async function setCompact(): Promise<void> {
+  const win = getCurrentWindow();
+
   await win.setSize(new LogicalSize(COMPACT.width, COMPACT.height));
   const monitor = await primaryMonitor();
   if (monitor) {
@@ -44,12 +48,16 @@ export async function setCompact(): Promise<void> {
 
 /** Restore the normal session window (keeps current position). */
 export async function restore(): Promise<void> {
+  const win = getCurrentWindow();
+
   await win.setSize(new LogicalSize(NORMAL.width, NORMAL.height));
   await win.setFocus();
 }
 
 /** Bring our window back to the front without resizing. */
 export async function focusSelf(): Promise<void> {
+  const win = getCurrentWindow();
+
   await win.setFocus();
 }
 
@@ -70,6 +78,8 @@ let saved: { x: number; y: number; w: number; h: number } | null = null;
  * The window position/size is remembered and restored by [bringBack].
  */
 export async function hideAside(targetPid?: number): Promise<void> {
+  const win = getCurrentWindow();
+
   try {
     // Only the FIRST park captures the original frame: hideAside may be called
     // again mid-segment (e.g. open_app learns the target pid) and must not
@@ -193,6 +203,8 @@ export async function hideAside(targetPid?: number): Promise<void> {
 
 /** Restore the window after an agent task: original frame + back to front. */
 export async function bringBack(): Promise<void> {
+  const win = getCurrentWindow();
+
   try {
     const s = saved;
     saved = null;

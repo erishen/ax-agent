@@ -11,13 +11,13 @@
  * `exampleBatch()` returns one shuffled batch; calling it again swaps in
  * a different random subset (换一批).
  */
-import { installedApps, hubCatalog, listApps, localAppsConfig } from "./api";
+import { installedApps, hubCatalog, listApps, localAppsConfig } from "./api.ts";
 import type {
   HubCapability,
   HubCatalog,
   InstalledApp,
   LocalAppsConfig,
-} from "./types";
+} from "./types.ts";
 
 /**
  * Canonical Chinese names for system apps whose CLI-resolved display name can

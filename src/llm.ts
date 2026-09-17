@@ -8,7 +8,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { mcpLocalTools } from "./api";
+import { mcpLocalTools } from "./api.ts";
 
 export interface LlmConfig {
   base_url: string;

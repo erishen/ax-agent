@@ -7,8 +7,8 @@
 // coverage, and the 16:43 session showed a wrong maximize landing layout
 // (all old coords stale) and wait_for false-positives on nav words.
 import { truncate } from "./tree-utils.ts";
-import type { MenuEntry } from "./api";
-import type { AxAppInfo } from "./types";
+import type { MenuEntry } from "./api.ts";
+import type { AxAppInfo } from "./types.ts";
 
 /**
  * Resolve a user/model-supplied app reference against the running-app list.

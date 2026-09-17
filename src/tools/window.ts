@@ -14,11 +14,11 @@ import {
   setPosition,
   tracePath,
   windowBounds,
-} from "../api";
-import { findNodes } from "../tree-utils";
-import { resolveWindowPlacement, type ScreenInfo } from "../tool-utils";
-import { argStr, refreshOutline, tui, type ToolResult } from "./shared";
-import type { SessionState } from "../types";
+} from "../api.ts";
+import { findNodes } from "../tree-utils.ts";
+import { resolveWindowPlacement, type ScreenInfo } from "../tool-utils.ts";
+import { argStr, refreshOutline, tui, type ToolResult } from "./shared.ts";
+import type { SessionState } from "../types.ts";
 
 export async function toolMoveWindow(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
   try {

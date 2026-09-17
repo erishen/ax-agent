@@ -16,8 +16,8 @@ import {
   scrollToVisible,
   setValue,
   typeKeys,
-} from "../api";
-import { findNodes } from "../tree-utils";
+} from "../api.ts";
+import { findNodes } from "../tree-utils.ts";
 import {
   argStr,
   clampToWindow,
@@ -28,8 +28,8 @@ import {
   tui,
   uiKind,
   type ToolResult,
-} from "./shared";
-import type { SessionState } from "../types";
+} from "./shared.ts";
+import type { SessionState } from "../types.ts";
 
 export async function toolClick(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
   if (state.pid === null) return { result: "尚未选择应用", state };

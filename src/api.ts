@@ -17,7 +17,7 @@ import type {
   LocalAppsConfig,
   PermissionDiagnostics,
   PermissionStatus,
-} from "./types";
+} from "./types.ts";
 
 /** Launch (or focus) an app by name; returns the resolved app + pid. */
 export function openApp(target: string): Promise<AxAppInfo> {

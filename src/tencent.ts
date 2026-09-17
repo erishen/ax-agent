@@ -7,7 +7,7 @@
 // Every rule here was learned from a real session; the session tag in
 // each comment is the reference for why the rule exists.
 
-import type { OcrScreenWord } from "./types";
+import type { OcrScreenWord } from "./types.ts";
 
 export const NAV_RE =
   /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
