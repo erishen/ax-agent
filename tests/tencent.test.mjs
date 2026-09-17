@@ -598,3 +598,25 @@ test("detectPage: list page with filter band stays listPage even with 立即播�
   assert.equal(f.channelHome, false);
   assert.equal(f.listPage, true);
 });
+
+test("buildPairs: one title keeps ONE score — closest badge wins, no double-pair (21:24 session: 出入平安 got 9.7 AND 9.3)", () => {
+  // List page: badges sit at the card top-right (y≈212), titles below
+  // (y≈244). The 9.7 badge (鹿鼎记's, cx 1103) fell within PAIR_CARD_DX of
+  // BOTH 鹿鼎记 (cx 921) and 出入平安 (cx 1193) and paired the closer one —
+  // 出入平安 got 9.7 AND 9.3, 鹿鼎记 none. The old title+score dedup kept
+  // both, and the model was told two scores for one film.
+  const words = [
+    W("9.3", 1361, 212, 20, 12),
+    W("8.3", 560, 212, 20, 12),
+    W("9.7", 1093, 212, 20, 12),
+    W("黑道中人•首播", 608, 241, 98, 20),
+    W("出入平安•首播", 1144, 244, 98, 17),
+    W("鹿鼎记I•独播", 876, 244, 90, 15),
+    W("洛杉矶劫案•首播", 341, 244, 113, 17),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  const byTitle = new Map(pairs.map((p) => [p.title, p]));
+  assert.equal(byTitle.size, pairs.length, "no title may appear twice");
+  assert.ok(byTitle.has("出入平安•首播"), "出入平安 must stay paired");
+  assert.ok(!byTitle.has("鹿鼎记I•独播") || byTitle.get("鹿鼎记I•独播").score === "9.7", "if 鹿鼎记 pairs at all it must be 9.7");
+});

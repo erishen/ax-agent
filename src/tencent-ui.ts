@@ -418,14 +418,27 @@ export class TencentUiState {
     if (miniWord) {
       const raw = parseMiniTitle(miniWord.text);
       if (raw.length >= 2) {
-        const isTaskFilm = this.lastListPairs.some((p) => sharesBigram(p.title, raw));
+        // Once the task film has been identified as playing (miniPlayingTitle
+        // set), keep treating the same strip as task playback on later OCRs —
+        // a transient OCR miss of the list (or a rating that dropped off
+        // screen) must not flip the playing task film into a "seen old film"
+        // (21:24 session: rememberSeen polluted seenTitles, the next buildPairs
+        // filtered 出入平安 out of the candidates, and isTaskFilm flipped).
+        const isTaskFilm =
+          this.lastListPairs.some((p) => sharesBigram(p.title, raw)) ||
+          (this.miniPlayingTitle !== "" && sharesBigram(this.miniPlayingTitle, raw));
         if (isTaskFilm) {
           // The strip is playing a candidate the model just clicked:
           // that IS the task playback. Remember it so repeat clicks on
-          // the same film are blocked.
+          // the same film are blocked. NOT a seen film: adding it to
+          // seenTitles would make the NEXT buildPairs filter it out of
+          // the candidates, isTaskFilm would flip to false on the next
+          // OCR, and the model would be told the playing task film is
+          // "a previously watched film to exclude" (21:24 session: the
+          // 出入平安 strip was re-classified as seen and the model
+          // abandoned the playback to hunt for 鹿鼎记).
           miniPlaying = raw;
           this.miniPlayingTitle = raw;
-          this.rememberSeen(raw);
         } else {
           miniSeenTitle = raw;
           this.miniPlayingTitle = "";

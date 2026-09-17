@@ -198,6 +198,9 @@ export interface PairCandidate {
    * badge (badge OCR is unreliable — 16:51 session: badges paired as
    * 9.0/9.8/9.1 while the films are ~8.3). */
   verified?: boolean;
+  /** Pair distance (dx-weight + dy) — used to keep the closest badge
+   * when two ratings resolve to the same title. */
+  d?: number;
 }
 
 export interface ClickGuardOpts {
@@ -460,15 +463,28 @@ export function buildPairs(
         x: Math.round(title.t.x + title.t.w / 2),
         y: Math.round(title.t.y + title.t.h / 2),
         verified: verified !== undefined,
+        d: title.d,
       });
     }
   }
-  // Dedup by title+score (two ratings can resolve to the same title).
-  const seenKey = new Set<string>();
-  return out.filter((p) => {
-    const k = `${p.title}\u0000${p.score}`;
-    if (seenKey.has(k)) return false;
-    seenKey.add(k);
-    return true;
-  });
+  // Dedup by title: two ratings can resolve to the same title (list pages
+  // render the badge at the card top-right, so a neighbour card's badge can
+  // fall within PAIR_CARD_DX and both resolve to the closer title — 21:24
+  // session: 出入平安 paired BOTH 9.7 (鹿鼎记's badge, dx≈90) and 9.3, and
+  // the model, told two scores for one film, chased the wrong one). A title
+  // must have exactly ONE pair: the verified score wins, otherwise the
+  // smaller d (closer badge) — the verified score is the only trustworthy
+  // one, and when both are unverified the closer badge is the better guess.
+  const byTitle = new Map<string, PairCandidate>();
+  for (const p of out) {
+    const cur = byTitle.get(p.title);
+    if (
+      !cur ||
+      (p.verified && !cur.verified) ||
+      (p.verified === cur.verified && (p.d ?? Infinity) < (cur.d ?? Infinity))
+    ) {
+      byTitle.set(p.title, p);
+    }
+  }
+  return [...byTitle.values()];
 }

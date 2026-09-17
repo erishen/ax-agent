@@ -118,6 +118,41 @@ test("processOcr: mini-strip task film → miniPlayingTitle set + replay warning
   assert.match(hints, /任务播放【已开始】/);
 });
 
+test("processOcr: task film stays 'playing' on the NEXT ocr of the same screen — seenTitles must NOT swallow it (21:24 session: 出入平安)", () => {
+  // 21:24 repro: after clicking 出入平安 the strip showed 「出入平安 播放中」
+  // on every ocr. Bug: rememberSeen added the TASK film to seenTitles, the
+  // next buildPairs filtered it out of candidates, isTaskFilm flipped, and
+  // the model was told the playing task film was "a previously watched film
+  // to exclude" — it abandoned the playback and burned the budget hunting
+  // for 鹿鼎记.
+  const tui = new TencentUiState();
+  const words = [
+    W("I1 平安 播放中", 337, 136, 106, 13, 0.3),
+    W("9.3", 1361, 212, 20, 12),
+    W("8.3", 560, 212, 20, 12),
+    W("9.7", 1093, 212, 20, 12),
+    W("黑道中人•首播", 608, 241, 98, 20),
+    W("出入平安•首播", 1144, 244, 98, 17),
+    W("鹿鼎记I•独播", 876, 244, 90, 15),
+    W("洛杉矶劫案•首播", 341, 244, 113, 17),
+    W("昌电影热播榜第1名", 1152, 268, 108, 15, 0.3),
+    W("首页", 198, 210, 29, 17),
+    W("你正在追", 196, 251, 63, 15, 0.3),
+    W("电视剧", 194, 331, 49, 18, 0.3),
+    W("电影", 196, 373, 33, 17, 0.3),
+    W("为你推荐", 341, 340, 157, 27, 0.3),
+  ];
+  const r1 = tui.processOcr(words);
+  assert.equal(tui.miniPlayingTitle, "平安");
+  assert.match(r1.hints, /任务播放【已开始】/);
+  // Same screen read again (strip text OCRs slightly differently):
+  const r2 = tui.processOcr(words.map((w) => (w.text === "I1 平安 播放中" ? { ...w, text: "II 口、平安 播放中" } : w)));
+  assert.equal(tui.miniPlayingTitle, "平安", "task film must stay playing on the next ocr");
+  assert.match(r2.hints, /任务播放【已开始】/);
+  assert.doesNotMatch(r2.hints, /之前看过的片/);
+  assert.ok(tui.lastListPairs.some((p) => p.title.includes("出入平安")), "task film must still be a candidate");
+});
+
 test("processOcr: mini-strip auto-resumed OLD film → remembered as seen, excluded from pairs", () => {
   const tui = new TencentUiState();
   const words = [
