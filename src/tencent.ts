@@ -31,7 +31,7 @@ export function ratingText(text: string): string | null {
   if (m2 && text.length <= 16) return m2[1];
   return null;
 }
-const TITLE_CHARS = /^[\u4e00-\u9fa5《》·\s0-9A-Za-z]+$/;
+const TITLE_CHARS = /^[\u4e00-\u9fa5《》·•\s0-9A-Za-z]+$/;
 
 /** True when the two strings share any 2-char substring (used to match a
  * mini-player strip title against a list candidate, and to exclude films
@@ -116,16 +116,31 @@ export function detectPage(joined: string): PageFlags {
     !/\d+\.\d\s*分/.test(j) &&
     /你正在追/.test(j);
   const playing = /播放中|正在播放|播放[片日F！]|放中/.test(j);
+  // Channel-list page: has a back button OR the filter/sort band
+  // (高分/最新/推荐/类型/院线…). 17:06 session: the 高分-sorted film list
+  // shows ratings (8.7/9.7) and the filter band but no back-button OCR
+  // text — the old rule (back button AND no ratings) classified it as
+  // unknown, so the click guard blocked every card click as a "home"
+  // click and the task burned 25 steps. A list page is a list page even
+  // when it shows ratings; the home page never carries the filter band.
   const listPage =
-    /〈返回|‹返回|←返回|<返回|›返回/.test(j) &&
-    !/\d+\.\d/.test(j) &&
-    !playing;
+    !detailPage &&
+    !playing &&
+    (/〈返回|‹返回|←返回|<返回|›返回/.test(j) ||
+      /高分|最热|最新|推荐|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(j));
   return { watchedPage, detailPage, channelHome, homeLike, accountPage, listPage, playing };
 }
 
 export const MIN_CONFIDENCE = 0.5; // word-confidence floor for ratings/titles
-export const PAIR_COL_DX = 100; // same-column bound: list columns are ~200px apart
-export const PAIR_MAX_D_LIST = 150; // pair distance budget on list pages
+// List pages have two card layouts: rating directly under the title
+// (dx≈0-100) and rating badge at the card's top-right with the title
+// below it (dx≈260 on 高分-sorted lists, 17:06 session). A card-wide
+// horizontal bound + a row bound (|dy| < one card height) pairs both
+// layouts while keeping neighbouring cards out (16:51 mis-pairs).
+export const PAIR_COL_DX = 100; // tight same-column bound (layout A)
+export const PAIR_CARD_DX = 300; // card-wide horizontal bound (layout B)
+export const PAIR_CARD_DY = 100; // same-card vertical bound (both layouts)
+export const PAIR_MAX_D_LIST = 220; // pair distance budget on list pages
 export const PAIR_MAX_D_DETAIL = 220; // detail page: title sits above rating (dx≈109)
 export const MINI_STRIP_Y = 150; // top strip / mini-player band
 export const MAX_PAIR_HINTS = 6; // candidate hints cap per OCR
@@ -217,7 +232,19 @@ export function buildClickGuard(opts: ClickGuardOpts): ClickGuardResult {
         setSortVerify: false,
       };
     }
-    if (!opts.lastOcrDetail && !opts.lastOcrPlayer && y > 280 && x >= 300) {
+    if (opts.lastOcrList && !opts.lastOcrDetail && !opts.lastOcrPlayer && y > 280 && x >= 300) {
+      // Filtered list page whose ratings did not pair with titles this
+      // frame (rating badge sits far right of the title on 高分-sorted
+      // lists, dx≈260 > the 100px pair column). A card click here opens
+      // the film's detail page where the model can verify the rating —
+      // that is the task's intended flow, so warn instead of blocking.
+      return {
+        note:
+          "\n（列表页但本屏无评分配对：可直接点卡片进详情页，用详情页评分复核是否 ≥9——评分以详情页为准；若想按片名精确定位，可滚动或点顶部排序刷新后再点）",
+        setSortVerify: false,
+      };
+    }
+    if (!opts.lastOcrList && !opts.lastOcrDetail && !opts.lastOcrPlayer && y > 280 && x >= 300) {
       // Nav-home / navigation page with NO rating pairs: the card area
       // plays arbitrary content on click (16:33 心动的信号9; 19:34 the
       // model clicked the card zone 3× after the warn-only hint). Warn was
@@ -320,13 +347,22 @@ export function buildPairs(
           // Episode/series labels (第二部/第3集) are episode chips, not
           // titles (14:05 session: 「第二部」 scored 9.4).
           !/^第[一二三四五六七八九十百\d]+[部集话期]/.test(t.text) &&
-          // List pages: rating badges sit directly below their own card's
-          // title (dx < 100; columns ~200px apart), so a title paired with
-          // a NEIGHBOURING card's rating is a mis-pair (16:51 session:
-          // 我看见两朵一样的云 9.0 / 红海行动 9.8 / 等风来 9.1 were all
-          // adjacent-card ratings; the films are ~8.3). Detail pages pair
-          // differently (title above rating, dx≈109).
-          (opts.detailPage || Math.abs(cx(t) - cx(r)) < PAIR_COL_DX),
+          // List pages have two card layouts, distinguished by where the
+          // rating badge sits relative to the title:
+          //  A) rating directly below the title (dx < 100, dy > 0) —
+          //     columns ~200px apart, so a far dx at dy>0 is a NEIGHBOUR
+          //     card's badge (16:51 session: 红海行动 '9.8' was an
+          //     adjacent-card rating, the film is ~8.3);
+          //  B) 高分-sorted lists: badge at the card top-right, title
+          //     below it (dy < 0, dx up to ~300 — 17:06 session).
+          // A rating ABOVE a title within card width is the same card;
+          // a rating BELOW a title only pairs within the tight column.
+          // Detail pages pair differently (title above rating, dx≈109).
+          (opts.detailPage ||
+            (Math.abs(t.y - r.y) < PAIR_CARD_DY &&
+              (r.y - t.y < 0
+                ? Math.abs(cx(t) - cx(r)) < PAIR_CARD_DX
+                : Math.abs(cx(t) - cx(r)) < PAIR_COL_DX))),
       )
       .map((t) => ({
         t,

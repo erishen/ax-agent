@@ -115,6 +115,48 @@ test("detectPage: channel list page (返回+筛选 tabs) is listPage (16:51 sess
   assert.equal(f.homeLike, false);
 });
 
+test("detectPage: 高分-sorted list WITH ratings (filter band, no back-key OCR) is listPage (17:06 session step 17)", () => {
+  // The 17:06 session burned 25 steps because this exact screen (filter
+  // band 高分/最新/推荐 + ratings 8.7/8.8/9.7, no back-key OCR text) was
+  // classified as neither listPage nor channelHome → the click guard
+  // blocked every card click as a "home" click.
+  const words = [
+    W("最新", 288, 125, 37, 20),
+    W("推荐", 229, 125, 37, 20),
+    W("高分", 345, 125, 35, 20),
+    W("免费", 402, 125, 35, 20),
+    W("即将上线", 459, 125, 70, 20),
+    W("8.7", 798, 301, 22, 13),
+    W("8.8", 490, 303, 20, 11),
+    W("9.7", 1417, 303, 18, 11),
+    W("碟中谍8•又燃又飒", 229, 333, 125, 19),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.listPage, true);
+  assert.equal(f.homeLike, false);
+  assert.equal(f.channelHome, false);
+});
+
+test("buildPairs: 高分-list layout B (badge top-right, dx≈260, dy<0) pairs (17:06 session step 17)", () => {
+  const words = [
+    W("最新", 288, 125, 37, 20),
+    W("高分", 345, 125, 35, 20),
+    W("8.7", 798, 301, 22, 13),
+    W("8.8", 490, 303, 20, 11),
+    W("9.7", 1417, 303, 18, 11),
+    W("环球高能•硬核科幻大片", 846, 333, 160, 19),
+    W("碟中谍8•又燃又飒", 229, 333, 125, 19),
+  ];
+  const pairs = buildPairs(words, { seenTitles: [], detailPage: false });
+  assert.deepEqual(
+    pairs.map((p) => [p.title, p.score]),
+    [
+      ["环球高能•硬核科幻大片", "8.7"],
+      ["碟中谍8•又燃又飒", "8.8"],
+    ],
+  );
+});
+
 test("detectPage: detail page (简介〉 + rating) is detailPage (13:55 session step 19)", () => {
   const words = [
     W("捕风追影 普通话•简介〉", 3050, 189, 177, 22),
