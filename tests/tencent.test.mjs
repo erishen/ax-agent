@@ -437,3 +437,32 @@ test("detectPage: update toast 已为您更新到最新内容 does not flip chan
   assert.equal(f.listPage, false);
   assert.equal(f.homeLike, false);
 });
+
+test("detectPage: NAV home with top-ticker 热播榜 (y<250) is NOT channelHome (17:57 session)", () => {
+  // The nav home's top ticker strip reads 「竖屏短剧热播榜第1名」@y≈137 —
+  // the old /热播榜/ rule misread the nav home as a channel home and the
+  // guard told the model "you are on the channel home", so it re-clicked
+  // the 电影 nav 7 times without switching pages (25 steps burned).
+  const words = [
+    W("竖屏短剧热播榜第1名", 661, 137, 117, 13),
+    W("首页", 190, 210, 35, 17),
+    W("你正在追", 196, 251, 61, 15),
+    W("④电影", 163, 371, 65, 19),
+    W("兰香如故", 927, 618, 47, 12),
+    W("热搜总榜第1名 三在追破300万", 345, 586, 239, 17),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, false);
+  assert.equal(f.homeLike, false); // 热播榜 ticker keeps it out of homeLike too
+});
+
+test("detectPage: scrolled NAV home (content 榜卡) stays NOT channelHome while 热搜总榜 present (17:57 step 23)", () => {
+  const words = [
+    W("竖屏短剧热播榜第1名", 525, 80, 185, 15),
+    W("动作电影榜第1名", 235, 613, 134, 17),
+    W("热搜总榜第1名 三在追破300万", 235, 609, 389, 24),
+    W("你正在追", 86, 196, 62, 19),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, false);
+});

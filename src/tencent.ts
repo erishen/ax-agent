@@ -96,9 +96,23 @@ export function detectPage(joined: string): PageFlags {
   // 热搜总榜) — 17:07 session: the film-channel home (电影热播榜 + 9.3)
   // was misread as the nav home, its 9.3 candidate was suppressed and the
   // model was told "no candidates" with a 9.3 on screen.
+  // But the NAV home ALSO carries 热播榜 in its top ticker strip
+  // (「竖屏短剧热播榜第1名」@y≈137 — 17:57 session: the nav home was
+  // misread as a channel home, the guard told the model "you are on the
+  // channel home" while the 电影 nav clicks were not switching pages, and
+  // the model burned 25 steps re-clicking the nav). A real channel-home
+  // hero card sits in the content area (y≥250) and the page has no
+  // 热搜总榜/飙升总榜 ticker.
+  const hotWordsY = j
+    .split("\n")
+    .filter((l) => /热播榜/.test(l))
+    .map((l) => {
+      const m = l.match(/@\(\d+, (\d+)\)/);
+      return m ? +m[1] : 0;
+    });
   const channelHome =
-    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放/.test(j) &&
-    /热播榜/.test(j);
+    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放|热搜总榜|飙升总榜/.test(j) &&
+    hotWordsY.some((y) => y >= 250);
   // Account / personal-center page: the top banner carries the user's
   // account info (账号设置 / 我的主页 / 积分 / 钻石). Its left nav has no
   // channel entries — classify it separately so the model isn't told to
