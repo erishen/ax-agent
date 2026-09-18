@@ -26,9 +26,9 @@ Assistant: ✅ AXPress performed on "Show Fonts"
 ```
 
 Supported commands (Chinese or English, phrasing is flexible):
-`打开 <app>` · `应用列表` · `读一下 [app]` · `找 <keyword>` ·
-`点击 <keyword>` · `输入 <text> [@field]` · `聚焦 <keyword>` ·
-`移动窗口 <x> <y>` · `点 <x> <y>` (inspect element at coordinates) · `帮助`
+`open <app>` · `app list` · `read [app]` · `find <keyword>` ·
+`click <keyword>` · `type <text> [@field]` · `focus <keyword>` ·
+`move window <x> <y>` · `probe <x> <y>` (inspect element at coordinates) · `help`
 
 The session keeps a "current app + UI outline"; keywords resolve to concrete
 elements, then the matching AX command runs
@@ -72,7 +72,7 @@ actions (`click` / `type_text` / `focus` / `named_action` / `scroll_to` / `menu_
 `drag` / `scroll` / `key` / `type_keys`), windows (`move_window` / `resize_window`),
 desktop (`clipboard_*` / `notify` / `open_url` / `speak` / `profile_search` /
 `fs_scan` / `fs_move`), local MCP (`mcp_local_*`) and the final `done`. Hard budget
-of 35 steps per run; when exhausted, "继续" resumes with the full context preserved.
+of 35 steps per run; when exhausted, "continue" resumes with the full context preserved.
 
 ### Safety mechanisms
 
@@ -158,7 +158,7 @@ cargo run --example probe_at -- 600 400   # global screen points, top-left origi
 cargo run --example keyboard_demo        # open TextEdit and create a doc first
 
 # 4. WeChat end-to-end: Cmd+F search → type → click result → verify switch
-#    (read-only safe: target is 文件传输助手, no messages are sent)
+#    (read-only safe: target is File Transfer Helper, no messages are sent)
 cargo run --example wechat_stress
 
 # 5. Synthesized mouse: drag window title bar (AX-invisible) + single/double click
@@ -201,7 +201,7 @@ Chips are not hardcoded — generated dynamically for your machine:
    `/v1/mcps` become skill / tool / MCP task chips.
 3. **Built-in fallback**: usable suggestions whenever the gateway is down or offline.
 
-Click **🔄 换一批** to reshuffle; 5-minute cache, rebuilt on entering 🤖 mode.
+Click **🔄 Shuffle** to reshuffle; 5-minute cache, rebuilt on entering 🤖 mode.
 
 Personal tasks (e.g. app-specific "pick by my taste" workflows) live in a
 git-ignored local config (`apps.local.json`), never in the codebase. At
@@ -210,9 +210,9 @@ Support/cn.erishen.ax-agent/apps.local.json`); a copy kept at the repo root is
 auto-migrated there on first launch, so dev and the installed app share the
 same task pool.
 
-Launch reliability: when the CLI locale resolves to English, `open -a 备忘录` fails
-but `open -b com.apple.Notes` always works — `ax_open_app` resolves Chinese names to
-bundle ids first, so both phrasings open the app.
+Launch reliability: when the CLI locale resolves to English, `open -a Notes` fails
+but `open -b com.apple.Notes` always works — `ax_open_app` resolves localized app
+names to bundle ids first, so both phrasings open the app.
 
 Inspect your machine's scan results:
 
