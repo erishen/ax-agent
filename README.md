@@ -269,7 +269,7 @@ ax-agent binary itself:
 
 | Project | vite port | HMR port |
 | --- | --- | --- |
-| `sprite` | 1420 | 1421 |
+| [`sprite`](https://github.com/erishen/sprite) | 1420 | 1421 |
 | `ax-agent` | 1520 | 1521 |
 
 ## Structure

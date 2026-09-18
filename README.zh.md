@@ -226,7 +226,7 @@ pnpm tauri build    # 产出 .app / .dmg（Dock 图标用 app-icon.svg 生成）
 
 | 项目 | vite 端口 | HMR 端口 |
 | --- | --- | --- |
-| `sprite` | 1420 | 1421 |
+| [`sprite`](https://github.com/erishen/sprite) | 1420 | 1421 |
 | `ax-agent` | 1520 | 1521 |
 
 ## 结构
