@@ -137,7 +137,7 @@ export function detectPage(joined: string): PageFlags {
   const heroChannelHome =
     /\d+\.\d\s*分/.test(j) &&
     /立即播放/.test(j) &&
-    !/高分|最热|最新|推荐|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(j);
+    !/高分|最热|最新|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(j);
   // Channel-home hero WITHOUT a visible rating badge: the carousel frame
   // can show only the poster/tagline (19:39 session: the 关东岭 frame had
   // no 9.x分, so detectPage returned no page flags; the bottom strip row
@@ -147,12 +147,17 @@ export function detectPage(joined: string): PageFlags {
   // the hero card zone of a channel or the nav home. Classifying the nav
   // home as channelHome is harmless: clicking any card there is equally
   // wrong, and the nav entries still pass via onNav.
+  // 推荐 is NOT a list-only marker: 为你推荐 is the channel home's own
+  // fixed row title (10:02 session: the 芙东岭 hero frame + 立即播放 was
+  // misread as a list page because 为你推荐 matched the negative list, so
+  // the guard let a hero-card click through as an onTitle hit and played
+  // the film without detail review).
   const navComplete =
     /电影/.test(j) && /电视剧/.test(j) && /综艺/.test(j) && /动漫/.test(j);
   const heroNoRating =
     /立即播放/.test(j) &&
     navComplete &&
-    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放|高分|推荐|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(
+    !/返回|最热|最新|高分好评|简介[＞>〉]|选集|播放列表|播放中|正在播放|高分|免费|即将上线|类型|院线|地区|年份|获奖佳片/.test(
       j,
     );
   const channelHome =

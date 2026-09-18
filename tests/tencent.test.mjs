@@ -169,6 +169,43 @@ test("detectPage: 电影 channel-home hero (热搜总榜 ticker + 立即播放 +
   assert.equal(f.listPage, false);
 });
 
+test("detectPage: 电影 channel-home hero WITH 为你推荐 row title is still channelHome (10:02 session step 4)", () => {
+  // The film-channel home shows the hero frame (芙东岭 poster + 立即播放)
+  // plus the fixed 为你推荐 row title below it. 推荐 used to sit in the
+  // hero negative list, so this page was misread as a list page, the guard
+  // let the hero-card click through as an onTitle hit, and the film played
+  // without detail-page review (10:02 session step 5).
+  const words = [
+    W("妾本草芥 鸟爱情剧榜第3名", 601, 144, 151, 13, 0.3),
+    W("腾讯视频", 206, 162, 71, 21, 0.3),
+    W("公首页", 184, 213, 61, 19, 0.3),
+    W("你正在追", 216, 254, 59, 15, 0.3),
+    W("V VIP会员", 184, 289, 84, 20, 0.3),
+    W("凶 电视剧", 184, 329, 76, 19, 0.3),
+    W("芙东岭", 362, 366, 156, 62, 0.3),
+    W("电影", 210, 370, 35, 15, 0.3),
+    W("：", 184, 370, 27, 17, 0.3),
+    W("◎ 综艺", 184, 407, 61, 19, 0.3),
+    W("动漫", 184, 446, 61, 17, 0.3),
+    W("张丹峰 张傲月 战争传奇", 358, 454, 160, 17, 0.3),
+    W("陈都灵张丹峰乱世并肩护家国", 360, 478, 194, 17, 0.3),
+    W("少儿", 216, 485, 31, 17, 0.3),
+    W("NBA", 214, 527, 33, 13, 0.3),
+    W("• 立即播放", 388, 532, 98, 21, 0.3),
+    W("年会不能停！2", 806, 551, 88, 18, 0.3),
+    W("出入平安", 1302, 552, 53, 16, 0.3),
+    W("为你推荐", 354, 580, 88, 18, 0.3),
+    W("迫在眉梢", 1160, 843, 88, 18, 0.3),
+    W("9.4", 1240, 870, 30, 15, 0.3),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.channelHome, true, "为你推荐 is the channel home's own row title, not a list marker");
+  // listPage may also be true here (为你推荐 hits its 推荐 feature) — that
+  // is harmless: buildClickGuard checks lastOcrChannelHome BEFORE the
+  // list branch, so every non-nav click is still hard-blocked.
+  assert.equal(f.homeLike, false);
+});
+
 test("buildPairs: 高分-list layout B (badge top-right, dx≈260, dy<0) pairs (17:06 session step 17)", () => {
   const words = [
     W("最新", 288, 125, 37, 20),
