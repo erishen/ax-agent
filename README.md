@@ -19,10 +19,10 @@ and reports back:
 ```
 You:      Open TextEdit
 Assistant: ✅ Opened TextEdit (pid 1234). Actionable elements: …
-You:      Type 你好，今天天气不错
+You:      Type Hello, how is the weather today
 Assistant: ✅ Text written to "Untitled"
-You:      Click 显示字体
-Assistant: ✅ AXPress performed on "显示字体"
+You:      Click Show Fonts
+Assistant: ✅ AXPress performed on "Show Fonts"
 ```
 
 Supported commands (Chinese or English, phrasing is flexible):
@@ -50,10 +50,10 @@ switch to Smart Mode — multi-step tasks need a model.
 plans and executes multi-step operations automatically:
 
 ```
-You: 帮我在备忘录记一下明天买牛奶
-🤖 open_app app=备忘录
-🤖 type_text text=明天买牛奶
-🤖 done 已在备忘录新建笔记并写入「明天买牛奶」
+You: Remind me in Notes to buy milk tomorrow
+🤖 open_app app=Notes
+🤖 type_text text=buy milk tomorrow
+🤖 done Created a Notes note with "buy milk tomorrow"
 ```
 
 Works with any OpenAI-compatible API (DeepSeek / Qwen / Ollama / LM Studio…):
@@ -173,8 +173,8 @@ The agent decision sequence behind `textedit_demo` (also what the UI buttons iss
 ```
 ax_list_apps        → find the pid of com.apple.TextEdit
 ax_tree(pid)        → locate the AXTextArea node in the tree (record child-index path)
-ax_focus_element    → write AXFocused=true                ←「聚焦」
-ax_set_value        → write AXValue="Hello…"              ←「写入」
+ax_focus_element    → write AXFocused=true                ← set keyboard focus
+ax_set_value        → write AXValue="Hello…"              ← set field value
 ax_set_position     → write AXPosition={120,120} (move window)
 ax_tree(pid)        → re-read to verify AXValue / AXFocused took effect
 ```
