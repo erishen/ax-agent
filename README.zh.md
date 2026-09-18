@@ -327,3 +327,6 @@ CGEvent 合成输入（鼠标/键盘/滚动）→ Agent 接口层（observe/act 
   可信环境中运行，且不要把授权终端/进程交给不可信脚本。
 - **Git 卫生**：提交历史已改写以移除个人画像数据与真实文件名；个人化示例任务只存在于
   本地 `apps.local.json`，绝不进入仓库。
+
+## 相关文章
+- [当 AX 不可靠时，如何让 AI 继续操作 macOS](https://erishen.cn/ax_agent/)

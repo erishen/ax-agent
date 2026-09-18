@@ -379,3 +379,6 @@ This tool can "see and operate" your whole desktop. Know the data flows:
 - **Git hygiene**: the commit history has been rewritten to remove personal profile
   data and real file names; personal example tasks live only in the local
   `apps.local.json`, never in the repository.
+
+## Related Articles
+- [When AX Can't Be Trusted: How to Keep Your AI Operating macOS](https://erishen.cn/ax_agent-en/)
