@@ -345,3 +345,39 @@ test("processOcr: nav home → home hint carries nav coords", () => {
   assert.match(hints, /当前是首页\/导航页/);
   assert.match(hints, /电影@\(1817,367\)/);
 });
+
+
+test("processOcr + clickGuard: icon-prefixed nav words still fill lastNavItems and let the 电影 nav click through (09-18 session)", () => {
+  // The left-rail icons OCR as stray prefixes (③电影 / 凶 电视剧 / ◎ 综艺 /
+  // V VIP会员). NAV_RE's exact ^$ match used to reject them, lastNavItems
+  // dropped 电影/电视剧/综艺, and the click guard's onNav let-through
+  // never fired — the correct 电影 nav click (185,370) was blocked as a
+  // hero-card click. Now navLabelOf strips the prefix.
+  const tui = new TencentUiState();
+  const words = [
+    W("交锋 当悬疑剧榜第1名", 593, 136, 127, 17, 0.3),
+    W("片库", 974, 136, 31, 17, 0.3),
+    W("腾讯视频", 206, 163, 74, 21, 0.3),
+    W("首页", 200, 208, 28, 21, 0.3),
+    W("你正在追", 196, 251, 63, 15, 0.3),
+    W("V VIP会员", 184, 289, 86, 22, 0.3),
+    W("凶 电视剧", 167, 329, 77, 20, 0.3),
+    W("③电影", 165, 370, 65, 20, 0.3),
+    W("◎ 综艺", 165, 411, 65, 21, 0.3),
+    W("动漫", 165, 453, 65, 19, 0.3),
+    W("少儿", 194, 495, 35, 17, 0.3),
+    W("④", 167, 533, 22, 19, 0.3),
+    W("NBA", 192, 537, 39, 15, 0.3),
+    W("短剧", 196, 576, 33, 17, 0.3),
+    W("鸟热搜总榜第1名 三在追破300万", 347, 586, 239, 17, 0.3),
+    W("刘学义 谭松韵 古装爱情", 358, 601, 160, 17, 0.3),
+  ];
+  tui.processOcr(words);
+  const film = tui.lastNavItems.find((n) => n.title === "电影");
+  assert.ok(film, "lastNavItems must include 电影 from the prefixed ③电影");
+  // 电影 word at (165,370) 65x20 → center ≈(198, 380); a click near it
+  // must hit onNav and pass, not be blocked as a hero-card click.
+  const guard = tui.clickGuard(185, 370, "单击");
+  assert.equal(guard.blocked, undefined, "nav click must not be blocked");
+  assert.match(guard.note, /电影/);
+});

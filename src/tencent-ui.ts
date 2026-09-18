@@ -17,7 +17,7 @@ import {
   MAX_PAIR_HINTS,
   MIN_CONFIDENCE,
   MINI_STRIP_Y,
-  NAV_RE,
+  navLabelOf,
   ratingText,
   buildClickGuard,
   buildPairs,
@@ -206,17 +206,18 @@ export class TencentUiState {
     // the window's left edge). The top bar (片库/腾讯视频) and VIP badge
     // are not channel entries; everything else in the column is.
     const navWords = words
+      .map((w) => ({ ...w, label: navLabelOf(w.text) }))
       .filter(
         (w) =>
           w.confidence >= 0.3 &&
-          NAV_RE.test(w.text) &&
-          !/^(片库|腾讯视频|VIP会员|VIP)$/.test(w.text) &&
+          w.label !== null &&
+          !/^(片库|腾讯视频|VIP会员|VIP)$/.test(w.label) &&
           w.y > 140 &&
           w.y < 760,
       )
       .sort((a, b) => a.x - b.x);
-    let navCluster: OcrScreenWord[] = [];
-    let best: OcrScreenWord[] = [];
+    let navCluster: (typeof navWords)[number][] = [];
+    let best: (typeof navWords)[number][] = [];
     for (const w of navWords) {
       if (!navCluster.length || w.x - navCluster[navCluster.length - 1].x <= 90) {
         navCluster.push(w);
@@ -227,7 +228,7 @@ export class TencentUiState {
     }
     if (navCluster.length > best.length) best = navCluster;
     this.lastNavItems = best.map((w) => ({
-      title: w.text,
+      title: w.label ?? w.text,
       x: Math.round(w.x + w.w / 2),
       y: Math.round(w.y + w.h / 2),
     }));

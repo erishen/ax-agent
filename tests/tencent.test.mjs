@@ -8,6 +8,7 @@ import {
   RATING_RE,
   buildPairs,
   detectPage,
+  navLabelOf,
   parseMiniTitle,
   sharesBigram,
 } from "../src/tencent.ts";
@@ -619,4 +620,33 @@ test("buildPairs: one title keeps ONE score — closest badge wins, no double-pa
   assert.equal(byTitle.size, pairs.length, "no title may appear twice");
   assert.ok(byTitle.has("出入平安•首播"), "出入平安 must stay paired");
   assert.ok(!byTitle.has("鹿鼎记I•独播") || byTitle.get("鹿鼎记I•独播").score === "9.7", "if 鹿鼎记 pairs at all it must be 9.7");
+});
+
+
+// -------------------------------------------------------------- navLabelOf
+
+test("navLabelOf: bare nav word passes through unchanged", () => {
+  assert.equal(navLabelOf("电影"), "电影");
+  assert.equal(navLabelOf("首页"), "首页");
+  assert.equal(navLabelOf("短剧"), "短剧");
+});
+
+test("navLabelOf: strips OCR icon-glyph prefixes glued to nav labels (09-18 session)", () => {
+  // Left-rail icons OCR as stray prefixes: ③电影 / 凶 电视剧 / ◎ 综艺 /
+  // V VIP会员 — NAV_RE's exact ^$ match rejected them, lastNavItems lost
+  // the channel entries and the click guard's onNav let-through never
+  // fired (left-nav clicks fell into the hero-card block).
+  assert.equal(navLabelOf("③电影"), "电影");
+  assert.equal(navLabelOf("凶 电视剧"), "电视剧");
+  assert.equal(navLabelOf("◎ 综艺"), "综艺");
+  assert.equal(navLabelOf("V VIP会员"), "VIP会员");
+  assert.equal(navLabelOf("③短剧"), "短剧");
+});
+
+test("navLabelOf: non-nav text returns null", () => {
+  assert.equal(navLabelOf("④"), null);
+  assert.equal(navLabelOf("兰香如故="), null);
+  assert.equal(navLabelOf("交锋 当悬疑剧榜第1名"), null);
+  assert.equal(navLabelOf("做丫鬟可惜！大爷心动撩拨"), null);
+  assert.equal(navLabelOf("C 实时热度超3万"), null);
 });

@@ -10,8 +10,23 @@
 import type { OcrScreenWord } from "./types.ts";
 
 export const NAV_RE =
-  /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
+  /^(电影|电视剧|综艺|动漫|少儿|首页|片库|NBA|短剧|小游戏|纪录片|体育|VIP会员|VIP|独播|返回|播放中|正在播放|立即播放|最热|最新|高分好评|免费|付费|资费|类型|全选|筛选|你正在追|腾讯视频)$/;
 export const RATING_RE = /^(\d[.:]\d)(分)?$/;
+
+/** Strip the icon-glyph prefix OCR glues onto a left-nav label and return
+ *  the bare nav word, or null when the text is not a nav entry. Tencent's
+ *  left rail icons OCR as stray prefixes: ③电影 / 凶 电视剧 / ◎ 综艺 /
+ *  V VIP会员 (09-18 session: NAV_RE's exact ^$ match rejected the prefixed
+ *  forms, so lastNavItems lost 电影/电视剧/综艺 and the click guard's
+ *  onNav let-through never fired — left-nav clicks fell into the hero-card
+ *  block). A single leading noise token (symbol, digit, letter or misread
+ *  Han char) plus optional space is dropped before the NAV_RE test. */
+export function navLabelOf(text: string): string | null {
+  const t = text.trim();
+  if (NAV_RE.test(t)) return t;
+  const m = t.match(/^(\S)\s*(.+)$/);
+  return m && NAV_RE.test(m[2]) ? m[2] : null;
+}
 
 /** Extract a rating from badge OCR text, tolerating noise prefixes like
  *  白9.3分 (the channel-home hero badge reads its star icon as 白/★).
