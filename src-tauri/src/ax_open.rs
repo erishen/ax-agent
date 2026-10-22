@@ -364,7 +364,14 @@ fn activate(pid: i32) -> Option<AxAppInfo> {
                 continue;
             }
             let _ = app.unhide();
-            let _ = app.activateWithOptions(NSApplicationActivationOptions::empty());
+            let _ = app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+            // macOS 14 ignores ActivateIgnoringOtherApps; LaunchServices is
+            // the reliable way to pull an already-running app forward.
+            if let Some(bundle) = app.bundleIdentifier() {
+                let _ = std::process::Command::new("open")
+                    .args(["-b", &bundle.to_string()])
+                    .status();
+            }
             return Some(app_info(&app, pid));
         }
     }

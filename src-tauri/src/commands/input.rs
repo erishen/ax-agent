@@ -108,49 +108,75 @@ pub fn ax_right_click(x: f64, y: f64, pid: Option<i32>) -> Result<(), String> {
 }
 
 /// Synthetic mouse/keyboard events all go through the HID event tap (the
-/// same pipeline as real input); aiming at the frontmost app is the natural
-/// path for scroll/focus-dependent apps — so we bring the target frontmost
-/// when possible, and never block on failure (a backgrounded target simply
-/// doesn't receive the event, which the agent verifies via ocr/read_screen).
+/// same pipeline as real input), so the target must own the foreground for
+/// the event to land in it. Bringing it forward is best-effort, but unlike
+/// the old guard we do NOT silently continue when activation fails: that
+/// made clicks land on whatever app was frontmost (23:23 session: Chrome /
+/// OpenCode received the Tencent nav clicks, the page never changed, and the
+/// model looped on 片库). Failing here lets the model re-open/focus instead.
 fn frontmost_guard(pid: Option<i32>) -> Result<(), String> {
+    if screen_locked() {
+        return Err("屏幕已锁定，无法操作 GUI；请先解锁 Mac 再重试。".to_string());
+    }
     let Some(want) = pid else {
         return Ok(());
     };
-    for round in 0..2 {
-        let Some(front) = ax_act::frontmost_pid() else {
-            return Ok(()); // cannot determine → don't block the click
-        };
-        if front == want {
+    match ax_act::frontmost_pid() {
+        Some(front) if front == want => return Ok(()),
+        None => return Ok(()), // cannot determine → don't block the click
+        Some(_) => {}
+    }
+    activate_pid(want);
+    // App activation is asynchronous; poll briefly instead of a single
+    // fixed sleep. 10×150ms is enough for a normal window to come forward
+    // without making every click feel sluggish when it is already active.
+    for _ in 0..10 {
+        if ax_act::frontmost_pid() == Some(want) {
             return Ok(());
         }
-        if round == 0 {
-            // The target dropped to the background (e.g. ax-agent took
-            // focus). Reactivate it, wait a beat, then re-check. The command
-            // wrappers are sync-bodied #[tauri::command(async)], so a real
-            // sleep is the only option here; it's once per agent step.
-            activate_pid(want);
-            std::thread::sleep(std::time::Duration::from_millis(400));
-        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
     }
-    // Activation failed (target app refuses focus, background-only phase, …).
-    // Not fatal: the caller's event goes to HID anyway, so it simply lands on
-    // whatever is frontmost — the agent notices via ocr/read_screen.
-    Ok(())
+    Err(format!(
+        "目标应用 (pid {want}) 未能切到前台；为避免点击落到其它应用，本次输入已取消。请先用 open_app/focus 激活目标应用再重试。"
+    ))
+}
+
+/// True when the login window owns the foreground (screen locked / at the
+/// login screen). Synthetic HID events cannot reach any app in this state,
+/// so every click would silently land nowhere; fail with an actionable
+/// message instead of letting the model loop.
+pub(crate) fn screen_locked() -> bool {
+    use objc2_app_kit::NSWorkspace;
+    NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .and_then(|app| app.bundleIdentifier())
+        .map(|id| id.to_string() == "com.apple.loginwindow")
+        .unwrap_or(false)
 }
 
 /// Bring the app with `pid` to the front (best-effort, no-op when gone).
+///
+/// macOS 14 deprecated `ActivateIgnoringOtherApps` and made it a no-op, and
+/// `activateWithOptions(empty())` does not pull a background app forward
+/// when ax-agent itself is active (23:23 session: Chrome stayed frontmost
+/// and every Tencent click landed there). LaunchServices' `open -b` is the
+/// remaining API that reliably activates an already-running app from a
+/// background process.
 fn activate_pid(pid: i32) {
-    use objc2_app_kit::{
-        NSApplicationActivationOptions, NSApplicationActivationPolicy, NSWorkspace,
-    };
+    use objc2_app_kit::{NSApplicationActivationOptions, NSWorkspace};
     for app in NSWorkspace::sharedWorkspace().runningApplications() {
-        if app.processIdentifier() != pid
-            || app.activationPolicy() != NSApplicationActivationPolicy::Regular
-        {
+        if app.processIdentifier() != pid {
             continue;
         }
         let _ = app.unhide();
-        let _ = app.activateWithOptions(NSApplicationActivationOptions::empty());
+        // Keep the in-process call as a cheap first attempt, then use
+        // LaunchServices for the cross-app activation macOS 14 requires.
+        let _ = app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+        if let Some(bundle) = app.bundleIdentifier() {
+            let _ = std::process::Command::new("open")
+                .args(["-b", &bundle.to_string()])
+                .status();
+        }
         return;
     }
 }

@@ -75,9 +75,17 @@ async function doOpenApp(state: SessionState, target: string): Promise<ToolResul
   } catch {
     /* outline is best-effort */
   }
+  // Re-opening the SAME process is a no-op (the model uses it as a reset
+  // when stuck). Do not clear maximizeUsed / waitForFailures / page hints:
+  // 21:27 session re-opened Tencent every few steps, which also re-armed
+  // maximize and let a second maximize reset the page. Only a different
+  // app (or a restarted process with a new pid) gets a fresh state.
+  const sameApp = state.pid !== null && state.pid === app.pid;
   state = markObserved({ ...state, pid: app.pid, appName: app.name, outline });
-  if (uiKind(app.name) === "netease") nui.resetForOpenApp();
-  else tui.resetForOpenApp();
+  if (!sameApp) {
+    if (uiKind(app.name) === "netease") nui.resetForOpenApp();
+    else tui.resetForOpenApp();
+  }
   // Remember the app across sessions (best-effort, never blocks the reply).
   void memoryAdd(app.name).catch(() => {});
   // First moment the drive target's pid is known: park our window on a

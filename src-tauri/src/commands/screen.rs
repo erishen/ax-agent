@@ -225,6 +225,9 @@ fn ocr_box_to_screen(
 /// See [`capture_window_png`]; also Vision failures.
 #[tauri::command(async)]
 pub fn ax_ocr_window(pid: i32) -> Result<Vec<OcrScreenWord>, String> {
+    if super::input::screen_locked() {
+        return Err("屏幕已锁定，无法读取/操作 GUI；请先解锁 Mac 再重试。".to_string());
+    }
     let (out, _window_id, position, size) = capture_window_png(pid)?;
     let res = crate::ocr::ocr_image(&out).map_err(|e| format!("OCR 失败: {e}"))?;
     let _ = std::fs::remove_file(&out);

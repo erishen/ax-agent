@@ -168,17 +168,39 @@ export function detectPage(joined: string): PageFlags {
   // channel entries — classify it separately so the model isn't told to
   // click a 电影 nav item that does not exist there.
   const accountPage = /账号设置|我的主页|积分|钻石/.test(j);
+  // Sports / other channel pages keep the complete left rail + top 片库, so
+  // the nav-home layout test below matches them too (23:23 session: the
+  // agent sat on 体育 and kept clicking 片库/电影 because homeLike was true).
+  // These content markers only appear on the sports channel.
+  const sportsPage = /热门赛程|全部赛事|体育VIP|体育频道|赛程表|球队榜|球员榜/.test(j);
   // Channel-list pages also carry the 你正在追 left-nav entry — a page
-  // with ratings (9.2分) or a 立即播放 button is a film list, not the
+  // with ratings (9.2分) or the sort/filter band is a film list, not the
   // home (22:52 session: the model clicked 极限审判's name on the film
   // channel and the home-guard blocked the correct click 3 times).
+  //
+  // 21:27 session: this Tencent build's home has NO 你正在追 in the OCR
+  // (left rail starts at 综艺) and a resume toast adds 立即播放. The old
+  // homeLike required 你正在追 and rejected 立即播放, so the home steer never
+  // armed and the model burned steps on wait_for 播放中 / click 片库 text.
+  // Recognize the nav-home layout by its top bar + complete left rail.
+  const hardNonHome =
+    /(返回|最热|最新|高分好评|类型|资费|地区|简介[＞>〉]|选集|播放列表|播放中|正在播放|播放[片日F！]|放中|热播榜)/.test(
+      j,
+    );
+  const navRailHits = ["综艺", "动漫", "少儿", "NBA", "短剧", "小游戏", "纪录片", "体育", "宠物TV", "游戏"].filter(
+    (x) => j.includes(x),
+  ).length;
+  const navHomeLayout =
+    /片库/.test(j) && /腾讯视频/.test(j) && navRailHits >= 5 && !hardNonHome;
   const homeLike =
     !accountPage &&
-    !/(返回|最热|最新|高分好评|类型|资费|地区|简介[＞>〉]|选集|播放列表|播放中|正在播放|播放[片日F！]|放中|热播榜|立即播放)/.test(
-      j,
-    ) &&
-    !/\d+\.\d\s*分/.test(j) &&
-    /你正在追/.test(j);
+    !channelHome &&
+    !sportsPage &&
+    !hardNonHome &&
+    (/你正在追/.test(j) || navHomeLayout) &&
+    // A rated card grid is a channel list even when it carries the 你正在追
+    // nav entry (22:52 session). The strong top-bar + rail layout wins.
+    (!/\d+\.\d\s*分/.test(j) || navHomeLayout);
   const playing = /播放中|正在播放|播放[片日F！]|放中/.test(j);
   // Channel-list page: has a back button OR the filter/sort band
   // (高分/最新/推荐/类型/院线…). 17:06 session: the 高分-sorted film list

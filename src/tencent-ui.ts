@@ -135,6 +135,44 @@ export class TencentUiState {
    * session: badges paired as 9.0/9.8/9.1 while the films are ~8.3). */
   detailVerifiedScores = new Map<string, string>();
 
+  /** Highest-scoring (≥9) detail-page candidate seen this session. Kept
+   * across the player-page OCR so the done gate can verify that the film
+   * actually playing is the one whose detail page was checked. */
+  detailHighCandidate: { title: string; score: string } | null = null;
+
+  /** Top-bar 「片库」 entry. This Tencent build has no 电影 item in the
+   * left rail (only 综艺/动漫/少儿/NBA/…); movies live behind 片库. The
+   * old home steer required a literal 电影 nav item, so it never armed
+   * here and the model burned steps on wait_for/click 体育/片库. */
+  libraryEntry: { title: string; x: number; y: number } | null = null;
+
+  /** Whether the user's current task is "pick a ≥9 movie and play it".
+   * Set by runSteps from the user message so the home steer / done gate
+   * do not hijack unrelated Tencent tasks (e.g. "open 腾讯视频"). */
+  movieTask = false;
+
+  /** Real playback evidence seen at least once: a player page (not the
+   * top mini-strip) or the task film in the mini-strip. Sticky so a later
+   * detail-page OCR does not erase proof the film actually played. */
+  playbackSeen = false;
+
+  /** True when the last OCR was the nav home and a left-nav channel exists.
+   * The only productive next step there is clicking a channel; scrolling,
+   * waiting and maximizing all burn steps (10/20 sessions: 8 runs hit the
+   * 35-step budget on scroll/wait_for/maximize loops).
+   * homeNavBlock enforces this before the action executes. */
+  homeNavPending = false;
+
+  /** maximize calls on a self-drawn app this session. One is enough: a
+   * second maximize resets Tencent/NetEase to the home page and moves the
+   * window across screens, invalidating every OCR coordinate. */
+  maximizeUsed = 0;
+
+  /** Failed wait_for signatures since the last real (page-changing) action.
+   * Two identical timeouts mean the target does not exist on this page;
+   * a third wait is refused instead of burning another 8s step. */
+  waitForFailures = new Map<string, number>();
+
   /** open_app resets the per-app decision state (a new target app has no
    * stale page flags). seenTitles intentionally survives — watched films
    * stay watched. */
@@ -149,6 +187,19 @@ export class TencentUiState {
     this.miniPlayingTitle = "";
     this.lastOcrChannelHome = false;
     this.detailVerifiedScores = new Map<string, string>();
+    this.detailHighCandidate = null;
+    this.libraryEntry = null;
+    this.playbackSeen = false;
+    this.homeNavPending = false;
+    this.maximizeUsed = 0;
+    this.waitForFailures.clear();
+  }
+
+  /** Mark whether the current task is the movie-recommendation flow.
+   * Task type survives open_app (the user asked for the same task); page
+   * flags do not. */
+  setMovieTask(on: boolean): void {
+    this.movieTask = on;
   }
 
   /** One-shot reminder consumed by the next non-ocr action (scroll/click/
@@ -202,6 +253,14 @@ export class TencentUiState {
     this.lastOcrPlayer = playing;
     this.lastOcrChannelHome = channelHome;
     this.lastOcrList = listPage;
+    // Top-bar 片库 entry (y≈80-140). OCR glues prefixes onto it
+    // (Q| 片库 / 1 片库 / QI片库); a short word in the top band is enough.
+    const lib = words
+      .filter((w) => /片库/.test(w.text) && w.text.length <= 8 && w.confidence >= 0.3 && w.y < 220)
+      .sort((a, b) => a.y - b.y || a.x - b.x)[0];
+    this.libraryEntry = lib
+      ? { title: "片库", x: Math.round(lib.x + lib.w / 2), y: Math.round(lib.y + lib.h / 2) }
+      : null;
     // Refill left-nav coordinates (nav words share a tight x cluster at
     // the window's left edge). The top bar (片库/腾讯视频) and VIP badge
     // are not channel entries; everything else in the column is.
@@ -241,7 +300,15 @@ export class TencentUiState {
       if (dt) {
         const name = parseMiniTitle(dt.text.replace(/[^，。\s]*简介[＞>〉].*$/, ""));
         if (name.length >= 2) {
-          this.detailVerifiedScores.set(name, rating.text.replace("分", ""));
+          const score = rating.text.replace("分", "");
+          this.detailVerifiedScores.set(name, score);
+          if (parseFloat(score) >= 9) {
+            this.detailHighCandidate = { title: name, score };
+          } else {
+            // A newly opened sub-9 detail replaces the old candidate; the
+            // done gate must not pass on a score the model saw earlier.
+            this.detailHighCandidate = null;
+          }
         }
       }
     }
@@ -449,6 +516,11 @@ export class TencentUiState {
         this.miniPlayingTitle = "";
       }
     }
+    // Sticky real-playback evidence for the done gate. A top mini-strip
+    // playing an OLD film is NOT task playback (miniPlaying is empty);
+    // a player page (no mini-strip) or the task film in the strip is.
+    if (miniPlaying) this.playbackSeen = true;
+    else if (playing && !miniPlayer && playerEvidence) this.playbackSeen = true;
     const miniHint = miniPlaying
       ? `\n（顶部小窗正在播放「${miniPlaying}」——这就是你刚点开的候选片，任务播放【已开始】：按规则确认播放器控件（选集/倍速/进度条/时间码）出现后 done 汇报，【不要再点击它】——重复点击卡片会把它重新播放一遍（13:55 会话把同一部片播放了两遍）。注意：它的评分来自列表徽标配对，【未经详情页复核】——如果用户指出分数不对（如实际只有 8.x），说明配对评分错了（评分徽标错配到相邻卡片），此片不达标：不要 done，按 esc 返回列表重新 ocr 挑片）`
       : `\n（顶部出现「播放中」小窗${playingTitle}：这是应用自动恢复之前视频的迷你播放器，【不是】本次任务播放成功的证据——即使屏幕上有评分/简介的详情页也一样。继续任务：详情页评分达标后点「立即播放」（ocr 有坐标），确认播放器控件（选集/倍速/进度条/时间码）出现才算完成${miniSeenTitle ? `。另外：小窗里这部（${miniSeenTitle}）是你之前看过的片，任务推荐应排除它——不要在列表里再找它/点它` : ""}）`;
@@ -526,6 +598,15 @@ export class TencentUiState {
       homeHint +
       seenHint +
       qualityNote;
+    // Arm the home-page hard steer. A resume dialog is an exception: the
+    // model must close it first (the click guard would otherwise refuse the
+    // close button because it is not a nav item).
+    this.homeNavPending =
+      this.movieTask &&
+      homeLike &&
+      !accountPage &&
+      !resume &&
+      this.homeNavTarget() !== null;
     return { joined, hints };
   }
 
@@ -548,6 +629,170 @@ export class TencentUiState {
     });
     if (guard.setSortVerify) this.pendingSortVerify = true;
     return { note: guard.note, blocked: guard.blocked };
+  }
+
+  /** The movie entry from the most recent OCR: the 电影 left-nav item when
+   * this build has one, otherwise the top-bar 片库 (where 电影 lives in the
+   * current Tencent layout). Null when the task is not a movie task or the
+   * last OCR was not a nav home. */
+  homeNavTarget(): { title: string; x: number; y: number } | null {
+    if (!this.movieTask) return null;
+    return this.lastNavItems.find((n) => n.title === "电影") ?? this.libraryEntry;
+  }
+
+  /** OCR coordinate for a semantic `click keyword=...` fallback. Self-drawn
+   * UIs expose 片库/电影 as plain text with no AX action; toolClick uses
+   * this to fire click_at instead of repeating "不支持动作". */
+  navCoordFor(label: string): { x: number; y: number } | null {
+    const key = label.replace(/\s+/g, "");
+    if (this.libraryEntry && key.includes(this.libraryEntry.title)) {
+      return { x: this.libraryEntry.x, y: this.libraryEntry.y };
+    }
+    const nav = this.lastNavItems.find(
+      (n) => n.title === key || key.includes(n.title),
+    );
+    return nav ? { x: nav.x, y: nav.y } : null;
+  }
+
+  /** Hard steer for the nav home: only observations and the movie entry
+   * (电影 nav, or 片库 in the current layout) are allowed. Everything else
+   * (scroll / wait_for / maximize / card clicks / other channels) either
+   * does nothing or starts an unrelated task. Returns a block message, or
+   * null when the action may proceed. The target click clears the flag so
+   * the channel page is unrestricted. */
+  homeNavBlock(toolName: string, args: Record<string, unknown>): string | null {
+    if (!this.homeNavPending) return null;
+    const target = this.homeNavTarget();
+    if (!target) {
+      this.homeNavPending = false;
+      return null;
+    }
+    // Observation / recovery tools stay free; they do not change the page.
+    if (
+      ["ocr", "read_screen", "screen_info", "element_at", "find", "list_apps", "frontmost_app", "open_app", "done", "key"].includes(
+        toolName,
+      )
+    ) {
+      return null;
+    }
+    // Semantic click on the target: toolClick falls back to the OCR
+    // coordinate for self-drawn UIs (the AX text has no action).
+    if (toolName === "click" && String(args.keyword ?? "").replace(/\s+/g, "") === target.title) {
+      this.homeNavPending = false;
+      return null;
+    }
+    if (toolName === "click_at" || toolName === "double_click_at") {
+      const x = Number(args.x);
+      const y = Number(args.y);
+      // Only the channel the task needs — not "any nav item". The 19:36
+      // session clicked 体育 @(1783,698) and then scrolled its page for 19
+      // steps; a generic nav click is just another way to lose the task.
+      const onTarget =
+        Math.abs(x - target.x) <= 80 && Math.abs(y - target.y) <= 30;
+      if (onTarget) {
+        this.homeNavPending = false;
+        return null;
+      }
+    }
+    const where =
+      target.title === "片库"
+        ? `顶部「片库」@(${target.x}, ${target.y})，进入片库后再选「电影」`
+        : `左侧导航「电影」@(${target.x}, ${target.y})`;
+    return (
+      `⛔ 当前是腾讯视频首页/导航页，下一步应当点击${where}，` +
+      `而不是 ${toolName}。首页卡片点卡会直接播放无关内容；滚动/等待进不了频道页；最大化还会把应用重置回首页。` +
+      "请先 ocr 确认页面，然后用 click_at 点击该坐标（自绘 UI 的文本 click 不会触发动作）。"
+    );
+  }
+
+  /** Completion gate for the movie task. The model tends to call done on
+   * whatever is on screen (21:27 session: a sports headline "曼联客场1-1
+   * 利茲联" was reported as a 9+ movie). Require both real player evidence
+   * and a ≥9 detail-page score for the film being played. */
+  movieDoneBlock(): string | null {
+    if (!this.playbackSeen) {
+      return (
+        "⛔ 任务未完成：还没有确认任何影片真的在播放。" +
+        "请先在「电影」频道/片库列表挑一部评分 ≥9 的片，点片名进详情页用 ocr 复核评分与题材，" +
+        "再点「播放」/「立即播放」，看到播放器控件（选集/倍速/进度条/时间码）后再 done。"
+      );
+    }
+    const high = this.detailHighCandidate;
+    if (!high) {
+      return (
+        "⛔ 已看到播放画面，但本次会话没有「详情页评分 ≥9」的证据。" +
+        "请按 esc 返回详情页，用 ocr 确认评分数字和题材，再重新播放并确认播放器控件；不要拿列表徽标或首页新闻当评分。"
+      );
+    }
+    if (this.miniPlayingTitle && !sharesBigram(high.title, this.miniPlayingTitle)) {
+      return (
+        `⛔ 正在播放的是「${this.miniPlayingTitle}」，与已复核的 ≥9 分候选「${high.title}」（${high.score} 分）不一致。` +
+        "请确认播放的是目标影片；不是的话按 esc 返回列表重新选片。"
+      );
+    }
+    if (
+      this.miniPlayingTitle &&
+      this.seenTitles.some((s) => sharesBigram(s, this.miniPlayingTitle))
+    ) {
+      return (
+        `⛔ 正在播放的「${this.miniPlayingTitle}」是你之前看过的影片，不能作为本次推荐。` +
+        "请按 esc 返回列表，换一部没看过的 ≥9 分片。"
+      );
+    }
+    return null;
+  }
+
+  /** Refuse a repeated wait_for that already timed out twice on this page. */
+  waitForBlock(args: Record<string, unknown>): string | null {
+    const sig = this.waitForSig(args);
+    const fails = this.waitForFailures.get(sig) ?? 0;
+    if (fails < 2) return null;
+    const target = String(args.text ?? args.element ?? "");
+    return (
+      `⛔ 同一个 wait_for（「${target}」）已连续超时 ${fails} 次：当前页面不会出现这个目标，继续等只会再烧一步。` +
+      "请改用 ocr 直接读当前画面；若目标是频道页特征（高分好评/最热/类型），先点击左侧「电影」导航进入频道，再等。"
+    );
+  }
+
+  /** Record a wait_for outcome; any page-changing action clears the streak. */
+  noteToolResult(toolName: string, args: Record<string, unknown>, result: string): void {
+    if (toolName === "wait_for") {
+      const sig = this.waitForSig(args);
+      if (/在 \d+s 内未(出现|消失)|未出现|未消失/.test(result)) {
+        this.waitForFailures.set(sig, (this.waitForFailures.get(sig) ?? 0) + 1);
+      } else {
+        this.waitForFailures.delete(sig);
+      }
+      return;
+    }
+    // OCR does not change the page; a successful action may have. Failed
+    // clicks / no-op open_app must NOT reset a wait_for streak — the 21:27
+    // session interleaved open_app + failed click 片库 between identical
+    // wait_for 播放中 timeouts, so every wait looked like the first one.
+    if (!OBSERVE_TOOLS.has(toolName)) {
+      const noPageChange =
+        /不支持动作|没有找到|未找到|未出现|未消失|失败|已打开|无需|已被/.test(result);
+      if (!noPageChange) this.waitForFailures.clear();
+    }
+  }
+
+  /** Allow one maximize per self-drawn app; a second one resets the page. */
+  maximizeBlock(): string | null {
+    if (this.maximizeUsed >= 1) {
+      return (
+        "⛔ 本次会话已经对自绘应用最大化过一次。再次 maximize 会让腾讯视频/网易云重置回首页并跨屏移动，" +
+        "之前 OCR 得到的坐标全部失效。请直接用当前 ocr 坐标继续；若窗口被挡住，用 move_window 的 x/y（或 position=center）" +
+        "或 resize_window，不要再 maximize。"
+      );
+    }
+    this.maximizeUsed += 1;
+    return null;
+  }
+
+  private waitForSig(args: Record<string, unknown>): string {
+    // Timeout is deliberately excluded: bumping 8s → 10s on the same target
+    // is the same failing wait, not a new attempt.
+    return `${String(args.element ?? "")}|${String(args.text ?? "")}|${args.gone === true ? 1 : 0}`;
   }
 
   /** element_at failure streak: after two strikes tell the model the app

@@ -660,6 +660,25 @@ test("buildPairs: one title keeps ONE score — closest badge wins, no double-pa
 });
 
 
+test("detectPage: sports channel with full nav rail is NOT homeLike (23:23 session)", () => {
+  const words = [
+    W("片库", 919, 80, 84, 19, 0.3),
+    W("腾讯视频", 75, 101, 73, 21, 0.3),
+    W("综艺", 86, 174, 33, 17, 0.3),
+    W("动漫", 86, 215, 33, 17, 0.3),
+    W("少儿", 86, 256, 33, 17, 0.3),
+    W("NBA", 88, 298, 33, 13, 0.3),
+    W("短剧", 86, 339, 31, 15, 0.3),
+    W("体育", 53, 459, 64, 22, 0.3),
+    W("热门赛程", 300, 300, 80, 20, 0.3),
+    W("全部赛事", 300, 340, 80, 20, 0.3),
+    W("体育VIP", 300, 380, 80, 20, 0.3),
+  ];
+  const f = detectPage(joinedOf(words));
+  assert.equal(f.homeLike, false, "sports channel must not trigger the home nav steer");
+  assert.equal(f.accountPage, false);
+});
+
 // -------------------------------------------------------------- navLabelOf
 
 test("navLabelOf: bare nav word passes through unchanged", () => {

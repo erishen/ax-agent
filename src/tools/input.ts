@@ -33,9 +33,33 @@ import type { SessionState } from "../types.ts";
 
 export async function toolClick(state: SessionState, args: Record<string, unknown>): Promise<ToolResult> {
   if (state.pid === null) return { result: "尚未选择应用", state };
-  const target = findNodes(state.outline, argStr(args, "keyword"))[0];
-  if (!target) return { result: `没有找到「${argStr(args, "keyword")}」，先 read_screen`, state };
-  if (!target.actions.length) return { result: `元素「${target.label}」不支持动作`, state };
+  const keyword = argStr(args, "keyword");
+  const target = findNodes(state.outline, keyword)[0];
+  if (!target) return { result: `没有找到「${keyword}」，先 read_screen`, state };
+  if (!target.actions.length) {
+    // Self-drawn UIs (Tencent Video etc.) expose nav labels as plain AX
+    // text with no action. The model correctly asks to click 片库/电影,
+    // but semantic click can never work; fall back to the OCR coordinate
+    // instead of returning "不支持动作" and letting it retry forever
+    // (21:27 session repeated click 片库 three times).
+    const coord = tui.navCoordFor(keyword);
+    if (coord) {
+      await clickAt(coord.x, coord.y, state.pid);
+      state = await refreshOutline(state);
+      return {
+        result:
+          `元素「${target.label}」不支持 AX 动作（自绘 UI）；已按最近一次 OCR 坐标 (${coord.x}, ${coord.y}) 点击「${keyword}」。` +
+          "请用 ocr 确认页面是否真的切换，不要重复点击同一文本。",
+        state,
+      };
+    }
+    return {
+      result:
+        `元素「${target.label}」不支持动作。该应用可能是自绘 UI：请用 ocr 找到目标坐标后 click_at，` +
+        "不要重复 click 同一文本。",
+      state,
+    };
+  }
   try {
     await performAction(state.pid, target.path, target.actions[0], { role: target.role, label: target.label });
   } catch (e) {

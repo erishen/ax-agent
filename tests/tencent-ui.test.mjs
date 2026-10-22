@@ -381,3 +381,228 @@ test("processOcr + clickGuard: icon-prefixed nav words still fill lastNavItems a
   assert.equal(guard.blocked, undefined, "nav click must not be blocked");
   assert.match(guard.note, /电影/);
 });
+
+// --- hard steers added after the 2026-10-20 budget-loop sessions ---
+
+function homeWords() {
+  return [
+    W("腾讯视频", 100, 100),
+    W("首页", 130, 200),
+    W("你正在追", 130, 240),
+    W("电视剧", 130, 280),
+    W("电影", 130, 320),
+    W("综艺", 130, 360),
+    W("动漫", 130, 400),
+    W("纪录片", 130, 440),
+  ];
+}
+
+test("homeNavBlock: nav home blocks scroll/wait/card clicks, allows nav click", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  t.processOcr(homeWords());
+  assert.equal(t.homeNavPending, true);
+
+  assert.equal(t.homeNavBlock("ocr", {}), null);
+  assert.ok(t.homeNavBlock("scroll", { x: 130, y: 700 }));
+  assert.ok(t.homeNavBlock("wait_for", { text: "高分好评" }));
+  assert.ok(t.homeNavBlock("click_at", { x: 900, y: 500 }));
+  assert.ok(t.homeNavBlock("menu_bar", { keyword: "电影" }));
+  // 19:36 session: clicking the 体育 nav item is NOT progress toward movies.
+  assert.ok(t.homeNavBlock("click_at", { x: 130, y: 440 }));
+
+  const nav = t.homeNavTarget();
+  assert.ok(nav);
+  assert.equal(t.homeNavBlock("click_at", { x: nav.x, y: nav.y }), null);
+  assert.equal(t.homeNavPending, false);
+  assert.equal(t.homeNavBlock("scroll", { x: 130, y: 700 }), null);
+});
+
+test("homeNavBlock: sports channel does not arm the home steer (23:23 session)", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  t.processOcr([
+    W("片库", 919, 80, 84, 19, 0.3),
+    W("腾讯视频", 75, 101, 73, 21, 0.3),
+    W("综艺", 86, 174, 33, 17, 0.3),
+    W("动漫", 86, 215, 33, 17, 0.3),
+    W("少儿", 86, 256, 33, 17, 0.3),
+    W("NBA", 88, 298, 33, 13, 0.3),
+    W("短剧", 86, 339, 31, 15, 0.3),
+    W("体育", 53, 459, 64, 22, 0.3),
+    W("热门赛程", 300, 300, 80, 20, 0.3),
+    W("全部赛事", 300, 340, 80, 20, 0.3),
+    W("体育VIP", 300, 380, 80, 20, 0.3),
+  ]);
+  assert.equal(t.homeNavPending, false);
+  assert.equal(t.homeNavBlock("scroll", { x: 900, y: 500 }), null);
+  assert.equal(t.homeNavBlock("click_at", { x: 900, y: 500 }), null);
+});
+
+test("homeNavBlock: a list page does not arm the home steer", () => {
+  const t = new TencentUiState();
+  t.processOcr([
+    W("〈返回", 320, 120),
+    W("高分好评", 700, 160),
+    W("9.3", 500, 400),
+    W("流浪地球", 460, 380),
+  ]);
+  assert.equal(t.homeNavPending, false);
+  assert.equal(t.homeNavBlock("scroll", { x: 500, y: 700 }), null);
+});
+
+test("waitForBlock: two identical timeouts refuse the third wait", () => {
+  const t = new TencentUiState();
+  const args = { text: "高分好评", timeout: 8 };
+  const timeout = "屏幕文字「高分好评」在 8s 内未出现。当前可见文字：…";
+  t.noteToolResult("wait_for", args, timeout);
+  assert.equal(t.waitForBlock(args), null);
+  t.noteToolResult("wait_for", args, timeout);
+  assert.ok(t.waitForBlock(args));
+  assert.equal(t.waitForBlock({ text: "播放中", timeout: 8 }), null);
+
+  t.noteToolResult("click_at", { x: 130, y: 320 }, "已点击");
+  assert.equal(t.waitForBlock(args), null);
+});
+
+test("waitForBlock: a successful wait clears the streak", () => {
+  const t = new TencentUiState();
+  const args = { text: "简介", timeout: 8 };
+  t.noteToolResult("wait_for", args, "「简介」在 8s 内未出现");
+  t.noteToolResult("wait_for", args, "等待完成（2s）：屏幕文字「简介」已出现 (100, 100)");
+  assert.equal(t.waitForBlock(args), null);
+});
+
+test("maximizeBlock: only one maximize per self-drawn app session", () => {
+  const t = new TencentUiState();
+  assert.equal(t.maximizeBlock(), null);
+  assert.ok(t.maximizeBlock());
+  t.resetForOpenApp();
+  assert.equal(t.maximizeBlock(), null);
+});
+
+test("homeNavBlock: current Tencent home has no 电影 nav → 片库 is the movie entry (21:27 session)", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  t.processOcr([
+    W("QI片库", 919, 80, 84, 19, 0.3),
+    W("腾讯视频", 75, 101, 73, 21, 0.3),
+    W("综艺", 86, 174, 33, 17, 0.3),
+    W("动漫", 86, 215, 33, 17, 0.3),
+    W("少儿", 86, 256, 33, 17, 0.3),
+    W("NBA", 88, 298, 33, 13, 0.3),
+    W("短剧", 86, 339, 31, 15, 0.3),
+    W("纪录片", 53, 418, 79, 20, 0.3),
+    W("体育", 53, 459, 64, 22, 0.3),
+  ]);
+  assert.equal(t.homeNavPending, true);
+  const target = t.homeNavTarget();
+  assert.equal(target?.title, "片库");
+  assert.deepEqual(t.navCoordFor("片库"), { x: target.x, y: target.y });
+  // 21:27: wait_for 播放中 / opening 体育 / click 片库 text all burned steps.
+  assert.ok(t.homeNavBlock("wait_for", { text: "播放中" }));
+  assert.ok(t.homeNavBlock("click_at", { x: 86, y: 174 }));
+  // Semantic click on the target is allowed; toolClick falls back to the
+  // OCR coordinate because the AX text has no action.
+  assert.equal(t.homeNavBlock("click", { keyword: "片库" }), null);
+  assert.equal(t.homeNavPending, false);
+});
+
+test("homeNavBlock: a generic Tencent task is not forced into the movie entry", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(false);
+  t.processOcr([
+    W("片库", 919, 80, 84, 19, 0.3),
+    W("腾讯视频", 75, 101, 73, 21, 0.3),
+    W("综艺", 86, 174, 33, 17, 0.3),
+  ]);
+  assert.equal(t.homeNavPending, false);
+  assert.equal(t.homeNavBlock("click_at", { x: 86, y: 174 }), null);
+});
+
+test("waitForBlock: failed click / no-op open_app do not reset the timeout streak", () => {
+  const t = new TencentUiState();
+  const args = { text: "播放中", timeout: 8 };
+  const timeout = "屏幕文字「播放中」在 8s 内未出现。当前可见文字：…";
+  t.noteToolResult("wait_for", args, timeout);
+  // 21:27 interleaved these between identical waits and every wait looked new.
+  t.noteToolResult("click", { keyword: "片库" }, "元素「文本」不支持动作");
+  t.noteToolResult("open_app", { app: "腾讯视频" }, "已打开 腾讯视频 (pid 96264)。界面元素：…");
+  t.noteToolResult("wait_for", args, timeout);
+  assert.ok(t.waitForBlock(args));
+});
+
+test("movieDoneBlock: blocks done on a sports headline with no playback (21:27 session)", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  t.processOcr([
+    W("曼联客场1-1利茲联，各项赛事…", 231, 472, 534, 49, 0.3),
+    W("体育", 53, 459, 64, 22, 0.3),
+    W("罗门亲自出手清算946", 236, 503, 155, 20, 0.3),
+  ]);
+  const block = t.movieDoneBlock();
+  assert.ok(block);
+  assert.match(block, /还没有确认任何影片真的在播放/);
+  assert.match(block, /详情页/);
+});
+
+test("movieDoneBlock: requires a ≥9 detail-page score, not a list badge", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  // Player page only: playback is real, but no detail verification.
+  t.processOcr([
+    W("播放中 捕风追影", 500, 400, 106, 13),
+    W("00:57/2:04:00", 1200, 500, 90, 15),
+    W("选集", 800, 700, 40, 17),
+    W("倍速", 900, 700, 40, 17),
+  ]);
+  assert.equal(t.lastOcrPlayer, true);
+  assert.match(t.movieDoneBlock() ?? "", /没有「详情页评分 ≥9」/);
+});
+
+test("movieDoneBlock: a later sub-9 detail clears the earlier ≥9 candidate", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  t.processOcr([
+    W("捕风追影 普通话•简介〉", 3050, 189, 177, 22),
+    W("内地 2025 动作 警匪较量", 3052, 215, 170, 17),
+    W("9.4", 3015, 309, 28, 19),
+  ]);
+  assert.ok(t.detailHighCandidate);
+  t.processOcr([
+    W("另一部片 普通话•简介〉", 3050, 189, 177, 22),
+    W("内地 2024 剧情", 3052, 215, 170, 17),
+    W("8.2", 3015, 309, 28, 19),
+  ]);
+  assert.equal(t.detailHighCandidate, null);
+  t.processOcr([
+    W("播放中 另一部片", 500, 400, 106, 13),
+    W("00:57/2:04:00", 1200, 500, 90, 15),
+    W("选集", 800, 700, 40, 17),
+  ]);
+  assert.match(t.movieDoneBlock() ?? "", /没有「详情页评分 ≥9」/);
+});
+
+test("movieDoneBlock: detail ≥9 + player evidence passes; mismatched/seen film blocks", () => {
+  const t = new TencentUiState();
+  t.setMovieTask(true);
+  t.processOcr([
+    W("捕风追影 普通话•简介〉", 3050, 189, 177, 22),
+    W("内地 2025 动作 警匪较量", 3052, 215, 170, 17),
+    W("9.4", 3015, 309, 28, 19),
+  ]);
+  assert.equal(t.detailHighCandidate?.title, "捕风追影");
+  t.processOcr([
+    W("播放中 捕风追影", 500, 400, 106, 13),
+    W("00:57/2:04:00", 1200, 500, 90, 15),
+    W("选集", 800, 700, 40, 17),
+  ]);
+  assert.equal(t.movieDoneBlock(), null);
+
+  t.miniPlayingTitle = "另一部片";
+  assert.match(t.movieDoneBlock() ?? "", /不一致/);
+
+  t.miniPlayingTitle = "捕风追影";
+  t.rememberSeen("捕风追影");
+  assert.match(t.movieDoneBlock() ?? "", /之前看过/);
+});

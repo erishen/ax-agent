@@ -227,12 +227,22 @@ export async function toolOcr(state: SessionState, args: Record<string, unknown>
   try {
     words = await ocrWindow(pid);
   } catch (e) {
+    const msg = asText(e);
+    // A locked screen makes every synthetic event a no-op; retrying OCR /
+    // clicks just burns the budget. Surface the lock directly and tell the
+    // model to stop until the user unlocks.
+    if (msg.includes("屏幕已锁定")) {
+      return {
+        result: `⛔ ${msg}\n在解锁前不要继续调用 ocr / click / wait_for；任务已暂停，等待用户解锁后继续。`,
+        state,
+      };
+    }
     // Same contract as read_screen: a "window not found" failure (target
     // still launching, minimized, hidden on another Space) must not abort
     // the whole run — give the model the recovery move instead.
     return {
       result:
-        `⚠️ OCR 失败：${asText(e)}\n` +
+        `⚠️ OCR 失败：${msg}\n` +
         "恢复建议：应用窗口可能未就绪/最小化/在其它 Space/已关闭——先 open_app 重新激活它，或 wait_for 等窗口出现后再重试。",
       state,
     };
