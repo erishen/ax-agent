@@ -10,6 +10,7 @@ import {
   garbledOcrNote,
   navWordNote,
   resolveWindowPlacement,
+  malformedTurnReason,
 } from "../src/tool-utils.ts";
 
 // Two screens as screen_info returns them: 1512x982 primary + 1920x1080
@@ -436,4 +437,77 @@ test("resolveAppMatch: display name, bundle id and numeric pid all resolve", () 
   assert.equal(resolveAppMatch(apps, "NeteaseMusic"), null);
   assert.equal(resolveAppMatch(apps, ""), null);
   assert.equal(resolveAppMatch(apps, "  "), null);
+});
+
+// --- malformed LLM turn detection (10/20 Tencent sessions) ---
+
+test("malformedTurnReason: normal prose is a valid final answer", () => {
+  assert.equal(
+    malformedTurnReason({ content: "已为你挑好《流浪地球》，理由如下…", tool_calls: [], finish_reason: "stop" }),
+    null,
+  );
+});
+
+test("malformedTurnReason: real tool calls pass through", () => {
+  assert.equal(
+    malformedTurnReason({
+      content: "",
+      tool_calls: [{ id: "c1", function: { name: "ocr", arguments: "{}" } }],
+      finish_reason: "tool_calls",
+    }),
+    null,
+  );
+});
+
+test("malformedTurnReason: empty reply is retried", () => {
+  assert.equal(malformedTurnReason({ content: "  ", tool_calls: [], finish_reason: "stop" }), "模型返回了空回复");
+});
+
+test("malformedTurnReason: tool-call arguments leaked into prose", () => {
+  // The exact fragment written to sessions.md on 2026-10-20 17:13–17:24.
+  assert.equal(
+    malformedTurnReason({
+      content: ' "arguments": {"keyword": "职业背景 年龄 人格特点"}}',
+      tool_calls: [],
+      finish_reason: "stop",
+    }),
+    "模型把工具调用参数当成正文返回",
+  );
+  assert.equal(
+    malformedTurnReason({
+      content: '{"tool_calls": [{"function": {"name": "ocr"}}]}',
+      tool_calls: [],
+      finish_reason: "stop",
+    }),
+    "模型把工具调用参数当成正文返回",
+  );
+});
+
+test("malformedTurnReason: max_tokens truncation is retried", () => {
+  assert.equal(
+    malformedTurnReason({ content: '{"name":"ocr","argu', tool_calls: [], finish_reason: "length" }),
+    "输出被 max_tokens 截断",
+  );
+});
+
+test("malformedTurnReason: action narrated as prose is retried (19:36 session)", () => {
+  assert.equal(
+    malformedTurnReason({
+      content: "找不到「电影」频道，直接点左侧导航「电影」进入。",
+      tool_calls: [],
+      finish_reason: "stop",
+    }),
+    "模型只说明了下一步动作，但没有调用工具",
+  );
+});
+
+test("malformedTurnReason: a completed report may still describe clicking", () => {
+  assert.equal(
+    malformedTurnReason({
+      content: "已完成：推荐《流浪地球》，评分 9.2。你之后可以直接点击播放观看。",
+      tool_calls: [],
+      finish_reason: "stop",
+    }),
+    null,
+  );
 });

@@ -324,3 +324,48 @@ export function extractAppNameFromLongArg(target: string, knownNames: string[]):
   }
   return best?.name ?? null;
 }
+
+// --- malformed LLM turn detection ---
+
+/** Shape needed to judge one model turn (structural subset of LlmTurn). */
+export interface TurnLike {
+  content?: string | null;
+  tool_calls?: unknown[] | null;
+  finish_reason?: string;
+}
+
+/**
+ * Detect a turn that must NOT be treated as the final answer: a weak model
+ * sometimes emits a tool call as prose (e.g. `"arguments": {"keyword": …}}`),
+ * an empty reply, or a `max_tokens`-truncated fragment. The old loop stored
+ * that as the assistant's final reply and silently ended at "正在思考…"
+ * (10/20 sessions: 4 attempts died at step 3 with this exact fragment).
+ * Returns a human-readable reason, or null for a normal turn.
+ */
+export function malformedTurnReason(turn: TurnLike): string | null {
+  if ((turn.tool_calls?.length ?? 0) > 0) return null;
+  const text = (turn.content ?? "").trim();
+  if (turn.finish_reason === "length") return "输出被 max_tokens 截断";
+  if (text === "") return "模型返回了空回复";
+  // Tool-call fragments leaked into content: `"arguments": …`,
+  // `"tool_calls": …`, `"function": {…}`, with or without a leading brace.
+  if (
+    /^["']?(arguments|tool_calls|function)["']?\s*:/.test(text) ||
+    /^\{\s*["']?(arguments|tool_calls|function)["']?\s*:/.test(text)
+  ) {
+    return "模型把工具调用参数当成正文返回";
+  }
+  // The model sometimes narrates the next action instead of calling a tool
+  // ("找不到「电影」频道，直接点左侧导航「电影」进入。" — 19:36 session), which
+  // the loop accepted as the final answer and silently stopped. Only judge
+  // short, action-shaped endings; real reports (已/完成/推荐/评分…) stay valid.
+  if (text.length <= 160 && !/^(已|完成|推荐|片名|评分|理由|报告|结果)/.test(text)) {
+    const last = text.split(/[。！？!?\n]/).filter((s) => s.trim() !== "").pop() ?? "";
+    const announcesAction =
+      /(直接|先|接下来|马上|这就|我(将|来|去)|让我|正在)[^。！？\n]{0,20}(点|点击|双击|进入|打开|切换|滚动|查找|播放)/;
+    if (last.trim().length <= 60 && announcesAction.test(last)) {
+      return "模型只说明了下一步动作，但没有调用工具";
+    }
+  }
+  return null;
+}

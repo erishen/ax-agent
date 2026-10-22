@@ -40,6 +40,7 @@ import {
   asText,
   extractAppNameFromLongArg,
   friendlyLlmError,
+  malformedTurnReason,
   parseCommand,
   stepHeading,
   withStepResult,
@@ -65,6 +66,10 @@ import { sessionTranscript } from "./transcript.ts";
 export const MAX_TOOL_RESULT_LEN = 2000;
 const TOOL_RESULT_TAIL_LEN = 300;
 
+/** A malformed model turn (empty / truncated / tool-call-as-prose) is
+ * retried this many times before the segment pauses with an explicit error. */
+const MAX_MALFORMED_TURN_RETRIES = 2;
+
 /**
  * 截断工具结果给模型用；超长时保留头 + 尾 + 截断标记。
  * `limit` 为 0 时不做截断（保留全量）。默认 2000，可在 ⚙️ 设置里调。
@@ -81,7 +86,7 @@ export function modelToolResult(result: string, limit = MAX_TOOL_RESULT_LEN): st
 // keep working without touching their import sites.
 export { redactSensitive, sessionTranscript, stripMarkdownSyntax } from "./transcript.ts";
 import { invoke } from "@tauri-apps/api/core";
-import { tui, treeOf, type ToolResult } from "./tools/shared.ts";
+import { tui, treeOf, uiKind, type ToolResult } from "./tools/shared.ts";
 import {
   toolFind,
   toolListApps,
@@ -423,7 +428,7 @@ function helpReply(state: SessionState): SessionState {
 // LLM agent mode (🤖): the model plans, we execute tools, it reports back
 // ---------------------------------------------------------------------------
 
-import { agentTools, llmChatStream, llmConfigured, type LlmConfigured, type LlmMessage } from "./llm.ts";
+import { agentTools, llmChatStream, llmConfigured, resolveMcpToolName, type LlmConfigured, type LlmMessage } from "./llm.ts";
 import { mcpLocalCall, memoryList } from "./api.ts";
 
 /** Monotonic id for assistant tool-step cards (🤖 N/25 bubbles). */
@@ -506,7 +511,9 @@ async function runTool(
         return toolDesktop(state, name, args);
       default:
         if (name.startsWith("mcp_local_")) {
-          const qualified = name.slice("mcp_local_".length);
+          // The model-facing name is sanitized for OpenAI compatibility
+          // (`echo.ping` → `echo_ping`); the bridge needs the original.
+          const qualified = resolveMcpToolName(name);
           return { result: await mcpLocalCall(qualified, args), state };
         }
         return { result: `未知工具 ${name}`, state };
@@ -614,6 +621,33 @@ async function runSteps(
   // slips through after a few other steps.
   let recentSigs: string[] = [];
 
+  // The original user task drives task-specific guards (movie completion,
+  // home nav). Use the visible transcript, not llmHistory: the latter gets
+  // corrective "你上一轮…" user turns appended during the loop.
+  const userTexts = working.messages.filter((m) => m.role === "user").map((m) => m.text);
+  const taskText =
+    [...userTexts]
+      .reverse()
+      .find((t) => t.trim().length > 12 && !/^(继续|重试|再来|好的|ok)$/i.test(t.trim())) ??
+    userTexts[userTexts.length - 1] ??
+    "";
+  const movieTask = /电影/.test(taskText) && /(评分|播放)/.test(taskText);
+  tui.setMovieTask(movieTask);
+
+  // Environment failures that retrying cannot fix. profile_search was
+  // called 4× in the 21:27 session while 8001 was down; each retry cost a
+  // step. After the first unreachable result, refuse further calls and
+  // force the model to use the user-provided profile facts.
+  let profileSearchDown = false;
+  // Apps already opened successfully in this segment. Re-opening the same
+  // app is a no-op the model uses as a "reset" (6× in 21:27), which also
+  // re-armed maximize/wait guards before the sameApp fix.
+  const openedApps = new Set<string>();
+
+  // Malformed-turn retries are counted per segment and reset as soon as a
+  // usable turn (tool call or valid prose) arrives.
+  let malformedRetries = 0;
+
   for (let steps = 0; steps < budget; steps += 1) {
     if (stopRequested) {
       stopRequested = false;
@@ -669,6 +703,56 @@ async function runSteps(
       };
     }
 
+    // A weak model sometimes returns a tool call as prose (e.g.
+    // `"arguments": {"keyword": …}}`), an empty reply, or a max_tokens-
+    // truncated fragment. Treating that as the final answer silently ends
+    // the run at "正在思考…" (10/20 sessions: 4 attempts died at step 3 with
+    // exactly that fragment). Retry with a corrective note instead.
+    const malformed = malformedTurnReason(turn);
+    if (malformed) {
+      if (malformedRetries < MAX_MALFORMED_TURN_RETRIES) {
+        malformedRetries += 1;
+        // Do NOT replay the broken fragment: a weak model tends to continue
+        // its own malformed prefix (19:52 session repeated the exact same
+        // `"arguments": {"keyword": …}}` three times). Record a marker so the
+        // turn still alternates, without feeding it back as an example.
+        if (turn.content?.trim()) {
+          llmHistory.push({ role: "assistant", content: "（上一轮输出格式无效，已丢弃）" });
+        }
+        llmHistory.push({
+          role: "user",
+          content:
+            `你上一轮没有产生可执行的工具调用（${malformed}）。请重新输出下一步的 tool_calls，参数必须是完整 JSON；` +
+            "参数名必须与工具定义完全一致（例如 profile_search 的参数是 query，不是 keyword）。" +
+            "若任务已完成，调用 done 汇报；不要输出残缺的 JSON 片段或空回复。" +
+            (turn.finish_reason === "length"
+              ? "这次只输出一个工具调用，不要长篇解释，避免再次被 token 上限截断。"
+              : ""),
+        });
+        working = commit(
+          reply(
+            working,
+            `⚠️ 模型返回异常（${malformed}），正在重试（${malformedRetries}/${MAX_MALFORMED_TURN_RETRIES}）…`,
+          ),
+        );
+        continue;
+      }
+      return {
+        state: commit({
+          ...reply(
+            working,
+            `⚠️ 模型连续 ${MAX_MALFORMED_TURN_RETRIES + 1} 次返回异常（${malformed}），本段任务已暂停。\n` +
+              `原始输出片段：\n\`\`\`\n${truncate(turn.content || "（空）", 300)}\n\`\`\`\n` +
+              "建议：在 ⚙️ 换一个工具调用更稳的模型，或把任务拆小后重发；回复「继续」也可以再试一次。",
+          ),
+          pending: null,
+          llmHistory,
+        }),
+        ended: "paused",
+      };
+    }
+    malformedRetries = 0;
+
     if (turn.finish_reason === "tool_calls" || (turn.tool_calls?.length ?? 0) > 0) {
       llmHistory.push({ role: "assistant", content: turn.content || null, tool_calls: turn.tool_calls });
       for (const call of turn.tool_calls ?? []) {
@@ -719,6 +803,57 @@ async function runSteps(
           call.function.name === "click_at" || call.function.name === "double_click_at";
         const cx = isClickTool && typeof args.x === "number" ? Number(args.x) : null;
         const cy = isClickTool && typeof args.y === "number" ? Number(args.y) : null;
+        // Self-drawn-UI hard steers (checked before the action fires, so a
+        // refused call costs one step but never touches the real UI):
+        //  · Tencent nav home → only OCR / a left-nav click may proceed;
+        //  · repeated wait_for timeouts → refuse the next identical wait;
+        //  · a second maximize → refuse (it resets the page + moves screens).
+        const kind = uiKind(working.appName);
+        let preBlock: string | null = null;
+        if (kind === "tencent") preBlock = tui.homeNavBlock(call.function.name, args);
+        if (!preBlock && call.function.name === "profile_search" && profileSearchDown) {
+          preBlock =
+            "⛔ profile_search 已确认环境不可达（资料服务未启动），继续调用只会浪费步骤。" +
+            "请直接使用用户消息里已提供的画像特征（如年龄、职业、工作强度、性格偏好）推断口味并继续任务；" +
+            "不要再调用 profile_search，也不要因此停下。";
+        }
+        if (!preBlock && call.function.name === "open_app") {
+          const opened = String(args.app ?? "").trim();
+          if (opened && openedApps.has(opened)) {
+            preBlock =
+              `⛔ 本次任务已经成功打开过「${opened}」；应用窗口仍在前台，重复 open_app 不会刷新页面，` +
+              "还会重置你刚看到的界面状态。请直接 ocr 读取当前画面，或用 click_at 推进。";
+          }
+        }
+        if (
+          !preBlock &&
+          kind === "tencent" &&
+          movieTask &&
+          call.function.name === "done"
+        ) {
+          preBlock = tui.movieDoneBlock();
+        }
+        if (!preBlock && kind !== null) {
+          if (call.function.name === "wait_for") preBlock = tui.waitForBlock(args);
+          if (
+            !preBlock &&
+            call.function.name === "move_window" &&
+            args.position === "maximize"
+          ) {
+            preBlock = tui.maximizeBlock();
+          }
+        }
+        if (preBlock) {
+          const seq = `${seqBase + steps + 1}/${budget}`;
+          const heading = stepHeading(seq, call.function.name, args);
+          const stepId = nextId++;
+          working = commit({
+            ...working,
+            messages: [...working.messages, { id: stepId, role: "assistant", text: withStepResult(heading, preBlock) }],
+          });
+          llmHistory.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: preBlock });
+          continue;
+        }
         const blind = tui.trackMove(call.function.name, cx, cy);
         if (blind.block) {
           const seq = `${seqBase + steps + 1}/${budget}`;
@@ -740,6 +875,18 @@ async function runSteps(
           messages: [...working.messages, { id: stepId, role: "assistant", text: heading }],
         });
         const { result: rawResult, state: next, dangerous } = await runTool(working, call.function.name, args);
+        // Remember environment-level failures / successful opens so the
+        // guards above can refuse pointless retries on later steps.
+        if (
+          call.function.name === "profile_search" &&
+          /资料服务不可达|exit status:\s*7|ECONNREFUSED|connection refused/i.test(rawResult)
+        ) {
+          profileSearchDown = true;
+        }
+        if (call.function.name === "open_app" && /^已打开\s/.test(rawResult)) {
+          const opened = String(args.app ?? "").trim();
+          if (opened) openedApps.add(opened);
+        }
         const result = blindWarn ? `${rawResult}\n${blindWarn}` : rawResult;
         working = next;
         if (dangerous) {
@@ -759,6 +906,9 @@ async function runSteps(
           });
           return { state: working, ended: "paused" };
         }
+        // Feed the executed result back into the per-app state machine:
+        // wait_for timeouts accumulate; any page-changing action resets them.
+        tui.noteToolResult(call.function.name, args, rawResult);
         working = commit({
           ...working,
           messages: working.messages.map((m) =>
@@ -920,6 +1070,7 @@ export async function confirmPending(
   if (approve) {
     const { result, state: next } = await runTool(working, pending.name, pending.args, { confirmed: true });
     working = next;
+    tui.noteToolResult(pending.name, pending.args, result);
     llmHistory.push({ role: "tool", tool_call_id: pending.toolCallId, name: pending.name, content: result });
     // Tool message alone can be rejected by strict gateways ("No user query
     // found in messages" on failover). Follow with an explicit user turn so

@@ -197,17 +197,41 @@ export const DESKTOP_TOOLS: Array<{ name: string; description: string; parameter
 /** Cached local MCP tools (mcp.local.json servers), loaded lazily. */
 let mcpCache: Array<{ name: string; description: string; parameters: unknown }> | null = null;
 
+/** Sanitized function name → original MCP qualified name (`echo.ping`). */
+const mcpToolNameMap = new Map<string, string>();
+
+/**
+ * OpenAI function names must match `^[a-zA-Z0-9_-]+$`. MCP servers often
+ * expose dotted names (`echo.ping`); forwarding those makes GLM/DeepSeek/NVIDIA
+ * reject the whole request with 400 ("invalid function name"), which is what
+ * made the gateway fail over to Qwen3-8B (20:20 tsm-hub log: tools[33]
+ * `mcp_local_echo.ping`). Replace every invalid character with `_`.
+ */
+export function safeToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** Map a model-facing MCP tool name back to the bridge's qualified name. */
+export function resolveMcpToolName(name: string): string {
+  return mcpToolNameMap.get(name) ?? name;
+}
+
 export async function localMcpTools(): Promise<
   Array<{ name: string; description: string; parameters: unknown }>
 > {
   if (mcpCache !== null) return mcpCache;
   try {
     const tools = await mcpLocalTools();
-    mcpCache = tools.map((t) => ({
-      name: `mcp_local_${t.name}`,
-      description: `[本地MCP] ${t.description}`,
-      parameters: t.parameters,
-    }));
+    mcpToolNameMap.clear();
+    mcpCache = tools.map((t) => {
+      const name = `mcp_local_${safeToolName(t.name)}`;
+      mcpToolNameMap.set(name, t.name);
+      return {
+        name,
+        description: `[本地MCP] ${t.description}`,
+        parameters: t.parameters,
+      };
+    });
   } catch {
     mcpCache = [];
   }
@@ -217,6 +241,7 @@ export async function localMcpTools(): Promise<
 /** Drop the MCP tool cache (call after editing mcp.local.json). */
 export function invalidateMcpCache(): void {
   mcpCache = null;
+  mcpToolNameMap.clear();
 }
 
 /**

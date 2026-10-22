@@ -57,7 +57,7 @@ impl LlmConfig {
         // the crate-relative path `ax-agent/.env`.
         let _ = dotenvy::dotenv();
         let _ = dotenvy::from_path(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.env"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.env"),
         );
 
         let base = std::env::var("AX_EXPLORER_LLM_BASE_URL").ok().filter(|v| !v.trim().is_empty());
@@ -473,6 +473,14 @@ pub async fn llm_chat(
         "messages": messages,
         "tools": tools_json,
     });
+    // Force a tool call. The gateway routes `tool_choice=required` requests
+    // to a tool-capable model (GLM-5.3-flash); without it, streaming+tools
+    // resolves to Qwen3-8B, which emits tool-call arguments as plain content
+    // (19:52 session: the same `"arguments": {"keyword": …}}` fragment three
+    // times, even though the tool schema says `query`).
+    if !tools.is_empty() {
+        body["tool_choice"] = serde_json::json!("required");
+    }
     // 输出 token 上限：0 = 不设限（旧行为）。默认 2048，防长回复过度消耗。
     if config.max_tokens > 0 {
         body["max_tokens"] = serde_json::json!(config.max_tokens);
@@ -626,6 +634,12 @@ pub async fn llm_chat_stream(
         })).collect::<Vec<_>>(),
         "stream": true,
     });
+    // Same routing signal as `llm_chat`: required tool calls keep the gateway
+    // on a tool-capable model instead of Qwen3-8B (which cannot emit
+    // OpenAI-style tool calls reliably).
+    if !tools.is_empty() {
+        body["tool_choice"] = serde_json::json!("required");
+    }
     // 输出 token 上限：0 = 不设限（旧行为）。默认 2048，防长回复过度消耗。
     if config.max_tokens > 0 {
         body["max_tokens"] = serde_json::json!(config.max_tokens);

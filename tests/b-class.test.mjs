@@ -19,7 +19,13 @@ import {
   skillTasks,
   toolTasks,
 } from "../src/examples.ts";
-import { AGENT_TOOLS, DESKTOP_TOOLS, PROFILE_SEARCH_TOOL } from "../src/llm.ts";
+import {
+  AGENT_TOOLS,
+  DESKTOP_TOOLS,
+  PROFILE_SEARCH_TOOL,
+  safeToolName,
+  resolveMcpToolName,
+} from "../src/llm.ts";
 
 // --- redactSensitive: credential / PII masking ------------------------------
 
@@ -166,4 +172,23 @@ test("llm tool definitions: name/description non-empty, parameters is an object"
   }
   assert.equal(AGENT_TOOLS.find((t) => t.name === "open_app") !== undefined, true);
   assert.equal(PROFILE_SEARCH_TOOL.name, "profile_search");
+});
+
+test("llm tool names: every static name matches the OpenAI function-name pattern", () => {
+  const all = [...DESKTOP_TOOLS, ...AGENT_TOOLS, PROFILE_SEARCH_TOOL];
+  for (const tool of all) {
+    assert.match(tool.name, /^[a-zA-Z0-9_-]+$/, `invalid function name: ${tool.name}`);
+  }
+});
+
+test("safeToolName: dotted MCP names are sanitized (GLM/DeepSeek 400 fix)", () => {
+  // 20:20 tsm-hub log: tools[33].function.name = "mcp_local_echo.ping"
+  // → upstream 400 → failover to Qwen3-8B.
+  assert.equal(safeToolName("mcp_local_echo.ping"), "mcp_local_echo_ping");
+  assert.equal(safeToolName("server/tool name"), "server_tool_name");
+  assert.match(safeToolName("a.b/c:d e"), /^[a-zA-Z0-9_-]+$/);
+});
+
+test("resolveMcpToolName: unknown names pass through unchanged", () => {
+  assert.equal(resolveMcpToolName("mcp_local_echo_ping"), "mcp_local_echo_ping");
 });
