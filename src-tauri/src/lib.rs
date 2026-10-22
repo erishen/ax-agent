@@ -136,6 +136,16 @@ fn append_session_log(app: tauri::AppHandle, text: String) -> Result<String, Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load `.env` once at startup. A saved `llm.json` short-circuits
+    // `LlmConfig::from_env`, so without this the PROFILE_RAG_* vars never
+    // reach `ax_profile_rag_configured` and profile_search is silently
+    // dropped from the tool list (20:21 session: the model reported it as
+    // unavailable). Try cwd first, then the crate-relative project root.
+    let _ = dotenvy::dotenv();
+    let _ = dotenvy::from_path(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.env"),
+    );
+
     tauri::Builder::default()
         .setup(|_app| {
             rpc::spawn();

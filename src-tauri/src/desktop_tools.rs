@@ -195,7 +195,7 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
         }
         "profile_search" => {
             // Personal-profile RAG retrieval from the local langchain-llm-toolkit
-            // (127.0.0.1:8001). The agent is the LLM: it needs the source
+            // (127.0.0.1:18002 by default, override with PROFILE_RAG_URL). The agent is the LLM: it needs the source
             // snippets, not a generated answer, so we call the search-only
             // endpoint. Credentials belong in env (PROFILE_RAG_URL/KEY), not in
             // the source tree.
@@ -205,7 +205,7 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
             }
             let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(4).min(8);
             let base = std::env::var("PROFILE_RAG_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8001".to_string());
+                .unwrap_or_else(|_| "http://127.0.0.1:18002".to_string());
             let Some(key) = std::env::var("PROFILE_RAG_KEY").ok().filter(|v| !v.trim().is_empty())
             else {
                 return "error: 未配置 PROFILE_RAG_KEY 环境变量，无法访问本地资料库".into();
@@ -213,7 +213,10 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
             let body = format!("{{\"query\":{},\"k\":{}}}", serde_json::to_string(&query).unwrap_or_default(), k);
             let out = std::process::Command::new("curl")
                 .args([
-                    "-s", "-m", "20",
+                    // 15s: the first query after a container restart loads the
+                    // embedding model (~6s); 5s produced a false "unreachable"
+                    // that the retry guard then locked in for the whole task.
+                    "-s", "-m", "15",
                     "-X", "POST", &format!("{base}/api/v1/rag/search"),
                     "-H", &format!("X-API-Key: {key}"),
                     "-H", "Content-Type: application/json",
@@ -251,7 +254,8 @@ pub fn exec(name: &str, args: &serde_json::Value) -> String {
                     }
                 }
                 Ok(o) => format!(
-                    "error: 资料服务不可达（{}），确认 langchain-llm-toolkit 在 8001 端口运行",
+                    "error: 资料服务不可达（{}），确认 langchain-llm-toolkit 在 PROFILE_RAG_URL 端口运行。\
+                     这是环境问题，不要重复调用 profile_search；请基于用户已提供的信息继续任务。",
                     o.status
                 ),
                 Err(e) => format!("error: curl 调用失败: {e}"),
